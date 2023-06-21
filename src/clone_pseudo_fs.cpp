@@ -7,16 +7,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-/* This is a utility program for listing USB-C Power Delivery ports
- * and partners in Linux. It performs data-mining in the sysfs file
- * system assumed to be mounted under /sys .
+/* This is a utility program for cloning Linux pseudo file systems
+ * but may be applicable elsewhere. Normal CLI tools (e.g. find and
+ * tar) have problems with sysfs, for example, because regular files
+ * in sysfs (i.e. attributes) do not correctly report their file
+ * size in their associated 'struct stat' instance.
  *
  */
 
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230617";
+static const char * const version_str = "0.90 20230620";
 
 #include <iostream>
 #include <fstream>
@@ -50,6 +52,8 @@ using sstring=std::string;
 static auto & scout { std::cout };
 static auto & scerr { std::cerr };
 
+static int verbose;  // don't want to pass 'struct opts_t' just to get this
+
 
 struct stats_t {
     unsigned int num_exist;     /* should be all valid file types */
@@ -69,8 +73,11 @@ struct stats_t {
     unsigned int num_socket;
     unsigned int num_other;
     unsigned int num_hidden;
+    unsigned int num_excluded;
+    unsigned int num_dir_d_success;
+    unsigned int num_sym_d_success;
     unsigned int num_error;
-    // above calculated during source scan
+    // above calculated during source scan (apart from *_d_success fields)
     // below calculated during transfer of regular files
     unsigned int num_reg_tries;       // only incremented when dst active
     unsigned int num_reg_success;
@@ -79,7 +86,7 @@ struct stats_t {
     unsigned int num_reg_s_eperm;
     unsigned int num_reg_s_eio;
     unsigned int num_reg_s_enodata;
-    unsigned int num_reg_s_enoent_enodev;
+    unsigned int num_reg_s_enoent_enodev_enxio;
     unsigned int num_reg_s_e_other;
     unsigned int num_reg_d_eacces;
     unsigned int num_reg_d_eperm;
@@ -91,18 +98,19 @@ struct stats_t {
 struct opts_t {
     bool destination_given;
     bool destin_all_new;
+    bool max_depth_active;  // for depth: 0 means one level below source_pt
     bool no_destin;
-    bool clone_hidden;
-    bool no_xdev;
+    bool clone_hidden;  // that is files starting with '.'
+    bool no_xdev;       // xdev in find means don't scan outside original fs
     bool source_given;
     bool want_stats;
     unsigned int reglen;
-    int max_depth;     // 0 means no limit
-    int verbose;
+    int max_depth;     // one less than given on cl
+    // int verbose;    // make file scope
     mutable struct stats_t stats;
-    fs::path source_pt;
-    fs::path destination_pt;
-    std::vector<sstring> exclude_v;
+    fs::path source_pt;         // a directory in canonical form
+    fs::path destination_pt;    // (will be) a directory in canonical form
+    std::vector<fs::path> exclude_v;    // vector of canonical paths
 };
 
 static const struct option long_options[] = {
@@ -162,29 +170,49 @@ static const char * const usage_message1 =
     "file\n"
     "                             (def: 256 bytes)\n"
     "    --source=SPATH|-s SPATH    SPATH is source for clone (def: /sys)\n"
-    "    --statistics|-S    gather then output statistics\n"
+    "    --statistics|-S    gather then output statistics (helpful with "
+    "--no-dst)\n"
     "    --verbose|-v       increase verbosity\n"
-    "    --version|-V       output version string and exit\n";
+    "    --version|-V       output version string and exit\n"
+    "\n";
+
+static const char * const usage_message2 =
+    "By default, this utility will clone /sys to /tmp/sys . The resulting "
+    "subtree\nis a frozen snapshot that may be useful for later analysis. "
+    "Hidden files\nare skipped and symlinks are created, even if dangling."
+    "The default is only\nto copy a maximum of 256 bytes of regular files."
+    "\n";
 
 static void
 usage()
 {
     scout << usage_message1;
+    scout << usage_message2;
 }
 
 static void
 pr2ser(const sstring & emsg, const std::error_code & ec = { },
        const std::source_location loc = std::source_location::current())
 {
-    if (emsg.size() == 0)       /* shouldn't need location.column() */
-        std::cerr << loc.file_name() << " " << loc.function_name()
-                  << ";ln=" << loc.line() << "\n";
-    else if (ec)
-        std::cerr << loc.function_name() << ";ln=" << loc.line()
-                  << ": " << emsg << ", error: " << ec.message() << "\n";
-    else
-        std::cerr << loc.function_name() << ";ln=" << loc.line() <<  ": "
+    if (emsg.size() == 0) {     /* shouldn't need location.column() */
+        if (verbose > 1)
+            scerr << loc.file_name() << " " << loc.function_name() << ";ln="
+                  << loc.line() << "\n";
+        else
+            scerr << "pr2ser() called but no message?\n";
+    } else if (ec) {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() << ": "
+                  << emsg << ", error: " << ec.message() << "\n";
+        else
+            scerr << emsg << ", error: " << ec.message() << "\n";
+    } else {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() <<  ": "
                   << emsg << "\n";
+        else
+            scerr << emsg << "\n";
+    }
 }
 
 static void
@@ -194,13 +222,21 @@ pr3ser(const sstring & e1msg, const char * e2msg = NULL,
 {
     if (e2msg == nullptr)
         pr2ser(e1msg, ec, loc);
-    else if (ec)
-        std::cerr << loc.function_name() << ";ln=" << loc.line() << ": '"
-                  << e1msg << "': " << e2msg << ", error: " << ec.message()
-                  << "\n";
-    else
-        std::cerr << loc.function_name() << ";ln=" << loc.line() << ": '"
+    else if (ec) {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
+                  << e1msg << "': " << e2msg << ", error: "
+                  << ec.message() << "\n";
+        else
+            scerr << "'" << e1msg << "': " << e2msg << ", error: "
+                  << ec.message() << "\n";
+    } else {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
                   << e1msg << "': " << e2msg << "\n";
+        else
+            scerr << "'" << e1msg << "': " << e2msg << "\n";
+    }
 }
 
 static void
@@ -210,14 +246,67 @@ pr4ser(const sstring & e1msg, const sstring & e2msg,
 {
     if (e3msg == nullptr)
         pr3ser(e1msg, e2msg.c_str(), ec, loc);
-    else if (ec)
-        std::cerr << loc.function_name() << ";ln=" << loc.line() << ": '"
-                  << e1msg << "," << e2msg << "': " << e3msg << ", error: "
-                  << ec.message() << "\n";
-    else
-        std::cerr << loc.function_name() << ";ln=" << loc.line() << ": '"
+    else if (ec) {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
+                  << e1msg << "," << e2msg << "': " << e3msg
+                  << ", error: " << ec.message() << "\n";
+        else
+            scerr << "'" << e1msg << "," << e2msg << "': " << e3msg
+                  << ", error: " << ec.message() << "\n";
+    } else {
+        if (verbose > 1)
+            scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
                   << e1msg << "," << e2msg << "': " << e3msg << "\n";
+        else
+            scerr << "'" << e1msg << "," << e2msg << "': " << e3msg << "\n";
+    }
 }
+
+// This assumes both paths are in canonical form
+static bool
+path_contains_canon(const fs::path & haystack_c_pt,
+                    const fs::path & needle_c_pt)
+{
+    auto hay_c_sz { haystack_c_pt.string().size() };
+    auto need_c_sz { needle_c_pt.string().size() };
+
+    if (need_c_sz == hay_c_sz)
+        return needle_c_pt == haystack_c_pt;
+    else if (need_c_sz < hay_c_sz)
+        return false;
+
+    auto c_need { needle_c_pt };        // since while loop modifies c_need
+
+    do {
+        // step needle back to its parent
+        c_need = c_need.parent_path();
+        need_c_sz = c_need.string().size();
+    } while (need_c_sz > hay_c_sz);
+
+    if (need_c_sz < hay_c_sz)
+        return false;
+    // here iff need_c_sz==hay_c_sz
+    return c_need == haystack_c_pt;
+}
+
+#if 0
+// Not required yet: path_contains() version for non-canonical paths
+static bool
+path_contains(const fs::path & haystack, const fs::path & needle,
+              std::error_code & ec)
+{
+    fs::path c_hay { fs::canonical(haystack, ec) };
+    if (ec)
+        return false;
+    fs::path c_need { fs::canonical(needle, ec) };
+    if (ec)
+        return false;
+
+    ec.clear();
+    return path_contains_canon(c_hay, c_need);
+}
+#endif
 
 static int
 xfer_regular_file(const sstring & from_file, const sstring & destin_file,
@@ -253,8 +342,8 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
                     ++op->stats.num_reg_s_eperm;
                 else if (res == EIO)
                     ++op->stats.num_reg_s_eio;
-                else if ((res == ENOENT) || (res == ENODEV))
-                    ++op->stats.num_reg_s_enoent_enodev;
+                else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+                    ++op->stats.num_reg_s_enoent_enodev_enxio;
                 else
                     ++op->stats.num_reg_s_e_other;
                 goto fini;
@@ -266,8 +355,8 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
             ++op->stats.num_reg_s_eperm;
         else if (res == EIO)
             ++op->stats.num_reg_s_eio;
-        else if ((res == ENOENT) || (res == ENODEV))
-            ++op->stats.num_reg_s_enoent_enodev;
+        else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+            ++op->stats.num_reg_s_enoent_enodev_enxio;
         else
             ++op->stats.num_reg_s_e_other;
         goto fini;
@@ -289,8 +378,8 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
             ++op->stats.num_reg_s_eio;
         else if (res == ENODATA)
             ++op->stats.num_reg_s_enodata;
-        else if ((res == ENOENT) || (res == ENODEV))
-            ++op->stats.num_reg_s_enoent_enodev;
+        else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+            ++op->stats.num_reg_s_enoent_enodev_enxio;
         else
             ++op->stats.num_reg_s_e_other;
         num = 0;
@@ -346,7 +435,7 @@ do_destin:
                 ++op->stats.num_reg_d_e_other;
             goto fini;
         }
-        if ((num2 < num) && (op->verbose > 0))
+        if ((num2 < num) && (verbose > 0))
             pr3ser(destin_nm, "short write(), strange");
     }
 
@@ -426,10 +515,10 @@ show_stats(const struct opts_t * op)
     scout << "Number of symlinks to char device nodes: "
           << q->num_sym2char << "\n";
     scout << "Number of symlinks to others: " << q->num_sym_other << "\n";
-    scout << "Number of symlinks to others: " << q->num_sym_other << "\n";
+    scout << "Number of hanging symlinks: " << q->num_sym_hang
+          << " [may be resolved later in scan]\n";
     scout << "Number of hidden files skipped: " << q->num_hidden_skipped
           << "\n";
-    scout << "Number of broken symlinks: " << q->num_sym_hang << "\n";
     scout << "Number of block device nodes: " << q->num_block << "\n";
     scout << "Number of char device nodes: " <<  q->num_char << "\n";
     scout << "Number of fifo_s: " << q->num_fifo << "\n";
@@ -437,7 +526,15 @@ show_stats(const struct opts_t * op)
     scout << "Number of other file types: " << q->num_other << "\n";
     scout << "Number of filenames starting with '.': " << q->num_hidden
           << "\n";
-    scout << "Maximum depth of source scan: " << q->max_depth << "\n";
+    if (! op->no_destin) {
+        scout << "Number of dst created directories: "
+              << q->num_dir_d_success << "\n";
+        scout << "Number of dst created symlinks: "
+              << q->num_sym_d_success << "\n";
+    }
+    scout << "Number of files excluded: " << q->num_excluded << "\n";
+    // N.B. recursive_directory_iterator::depth() is one less than expected
+    scout << "Maximum depth of source scan: " << q->max_depth + 1 << "\n";
     scout << "Number of scan errors detected: " << q->num_error << "\n";
     if (q->num_reg_tries == 0)
         return;
@@ -451,8 +548,8 @@ show_stats(const struct opts_t * op)
     scout << "Number of source EIO errors: " << q->num_reg_s_eio << "\n";
     scout << "Number of source ENODATA errors: " << q->num_reg_s_enodata
           << "\n";
-    scout << "Number of source ENOENT or ENODEV errors: "
-          << q->num_reg_s_enoent_enodev << "\n";
+    scout << "Number of source ENOENT, ENODEV or ENXIO errors: "
+          << q->num_reg_s_enoent_enodev_enxio << "\n";
     scout << "Number of source other errors: " << q->num_reg_s_e_other
           << "\n";
     scout << "Number of dst EACCES errors: " << q->num_reg_d_eacces << "\n";
@@ -467,7 +564,10 @@ static std::error_code
 do_clone(const struct opts_t * op)
 {
     bool beyond_for = false;
+    bool possible_exclude = op->exclude_v.size() > 0;
+    bool exclude_entry;
     int res {} ;
+
     struct stats_t * q = &op->stats;
     dev_t containing_fs_inst {} ;
     struct stat root_stat, oth_stat;
@@ -484,54 +584,76 @@ do_clone(const struct opts_t * op)
     fs::recursive_directory_iterator end_itr { };
     for (fs::recursive_directory_iterator itr(op->source_pt, dir_opt, ec);
          (! ec) && itr != end_itr;
-         beyond_for = false, itr.increment(ec) /* avoid exceptions ... */ ) {
+         beyond_for = false, itr.increment(ec) ) {
 
         beyond_for = true;
-        const auto& entry = *itr;
+        const auto& entry { *itr };
+        // auto entry { *itr };
+        // fs::directory_entry entry { *itr };
+        // since op->source_pt is in canonical form, assume entry.path()
+        // will either be in canonical form, or absolute form if symlink
+        fs::path pt { entry.path() };
+        auto depth = itr.depth();
 
-        if (op->verbose > 6)
-            pr3ser(entry.path(), "about to scan this source entry");
+        if (verbose > 6)
+            pr3ser(pt, "about to scan this source entry");
         fs::file_type sl_ftype = entry.symlink_status(ec).type();
 
         if (ec) {       // serious error
             ++q->num_error;
-            if (op->verbose > 2)
-                pr3ser(entry.path(), "symlink_status() failed, continue", ec);
+            if (verbose > 2)
+                pr3ser(pt, "symlink_status() failed, continue", ec);
+            // thought of using entry.refresh(ec) but no speed improvement
             continue;
         }
-        auto depth = itr.depth();
         if (depth > op->stats.max_depth)
             op->stats.max_depth = depth;
         fs::file_type targ_ftype = fs::file_type::none;
 
+        // this conditional is a sanity check, may be overkill
+        if (! path_contains_canon(op->source_pt, pt)) {
+            pr4ser(op->source_pt, pt, "is not contained in source path?");
+            break;
+        }
         if (fs::exists(entry, ec)) {
             targ_ftype = entry.status(ec).type();
             if (ec) {
-                if (op->verbose > 4)
-                    pr3ser(entry.path(), "status() failed, continue", ec);
+                if (verbose > 4)
+                    pr3ser(pt, "status() failed, continue", ec);
                 ++q->num_error;
             }
         } else {
             // expect sl_ftype to be symlink, so dangling target
-            if (op->verbose > 4)
-                pr3ser(entry.path(), "fs::exists() failed, continue", ec);
+            if (verbose > 4)
+                pr3ser(pt, "fs::exists() failed, continue", ec);
             if (ec)
                 ++q->num_error;
         }
 
-        fs::path pt { entry.path() };
         sstring fn { pt.filename() };
         bool me_hidden = ((fn.size() > 0) && (fn[0] == '.'));
         fs::path sl_pt, c_sl_pt, rel_path;
 
+        exclude_entry = false;
+        if (possible_exclude) {
+            exclude_entry = std::ranges::binary_search(op->exclude_v, pt);
+            if (exclude_entry)
+                ++op->stats.num_excluded;
+            if (exclude_entry && (verbose > 3))
+                pr3ser(pt, "matched for exclusion");
+        }
         if (op->want_stats)
             update_stats(sl_ftype, targ_ftype, me_hidden, op);
-        if (op->no_destin)
+        if (op->no_destin) {
+            if ((sl_ftype == fs::file_type::directory) &&
+                op->max_depth_active && (depth >= op->max_depth)) {
+                if (verbose > 2)
+                    scerr << "Source at max_depth: " << pt
+                          << " [" << depth << "], don't enter\n";
+                itr.disable_recursion_pending();
+            }
             continue;
-#if 0
-        if (targ_ftype == fs::file_type::none)       // clone broken symlink ?
-            continue;
-#endif
+        }
         if ((! op->clone_hidden) && me_hidden) {
             ++op->stats.num_hidden_skipped;
             continue;
@@ -541,13 +663,14 @@ do_clone(const struct opts_t * op)
             ec.assign(errno, std::system_category());
             pr3ser(pt, "stat() failed", ec);
             ++q->num_error;
-            break;
+            continue;
         }
         fs::path rel_pt { fs::proximate(pt, op->source_pt, ec) };
         if (ec) {
-            pr3ser(pt, "proximate() failed", ec);
+            if (verbose > 1)
+                pr3ser(pt, "proximate() failed", ec);
             ++q->num_error;
-            break;
+            continue;
         }
         fs::path ongoing_destin_pt { op->destination_pt / rel_pt };
 
@@ -556,16 +679,20 @@ do_clone(const struct opts_t * op)
             if (! op->no_xdev) { // double negative ...
                 if (oth_stat.st_dev != containing_fs_inst) {
                     // do not visit this sub-branch: different fs instance
-                    if (op->verbose > 2)
-                        std::cout << "Source trying to leave this fs "
-                                     "instance at: " << pt << "\n";
+                    if (verbose > 2)
+                        scout << "Source trying to leave this fs instance "
+                                 "at: " << pt << "\n";
                     itr.disable_recursion_pending();
                 }
             }
-            if ((op->max_depth > 0) && (depth >= op->max_depth)) {
-                if (op->verbose > 2)
-                    std::cout << "Source at max_depth and this is "
-                                 "a directory: " << pt << ", don't enter\n";
+            if (exclude_entry) {
+                itr.disable_recursion_pending();
+                continue;
+            }
+            if (op->max_depth_active && (depth >= op->max_depth)) {
+                if (verbose > 2)
+                    scout << "Source at max_depth and this is a directory: "
+                          << pt << ", don't enter\n";
                 itr.disable_recursion_pending();
             }
             if (! op->destin_all_new) { /* may already exist */
@@ -573,15 +700,15 @@ do_clone(const struct opts_t * op)
                     if (fs::is_directory(ongoing_destin_pt, ec)) {
                         ;       // good, nothing to do, stats ?
                     } else if (ec) {
-                        pr3ser(ongoing_destin_pt, "fs::is_directory() failed",
+                        pr3ser(ongoing_destin_pt, ":is_directory() failed",
                                ec);
                         ++q->num_error;
-                    } else if (op->verbose > 0)
+                    } else if (verbose > 0)
                         pr3ser(ongoing_destin_pt, "exists but not directory, "
                                "skip");
                     break;
                 } else if (ec) {
-                    pr3ser(ongoing_destin_pt, "fs::exists() failed", ec);
+                    pr3ser(ongoing_destin_pt, "exists() failed", ec);
                     ++q->num_error;
                     break;
                 } else {
@@ -589,19 +716,24 @@ do_clone(const struct opts_t * op)
                 }
             }
             if (! fs::create_directory(ongoing_destin_pt, pt, ec)) {
-		if (op->verbose > 1)
-                    pr3ser(ongoing_destin_pt, "fs::create_directory() failed",
+                if (verbose > 1)
+                    pr3ser(ongoing_destin_pt, "create_directory() failed",
                            ec);
                 ++q->num_error;
                 break;
-            } else if (op->verbose > 4)
-                pr3ser(pt, "fs::create_directory() ok");
+            } else {
+                ++q->num_dir_d_success;
+                if (verbose > 4)
+                    pr3ser(pt, "create_directory() ok");
+            }
             break;
         case fs::file_type::symlink:
             {
+                // what to do about exclude_entry==true ?
                 fs::path target_pt = fs::read_symlink(pt, ec);
                 if (ec) {
-                    pr3ser(pt, "fs::read_symlink() failed", ec);
+                    if (verbose > 1)
+                        pr3ser(pt, "read_symlink() failed", ec);
                     ++q->num_error;
                     break;
                 }
@@ -610,8 +742,8 @@ do_clone(const struct opts_t * op)
                 if (pt_parent_pt != op->source_pt) {
                     prox_pt /= fs::proximate(pt_parent_pt, op->source_pt, ec);
                     if (ec) {
-                        pr3ser(pt_parent_pt, "symlink: fs::proximate() "
-                               "failed", ec);
+                        pr3ser(pt_parent_pt, "symlink: proximate() failed",
+                               ec);
                         ++q->num_error;
                         break;
                     }
@@ -622,12 +754,17 @@ do_clone(const struct opts_t * op)
                                 fs::symlink_status(lnk_pt, ec).type();
 
                     if (ec) {
+                        int v = ec.value();
+
                         // ENOENT can happen with "dynamic" sysfs
-                        if ((ec.value() == ENOENT) || (ec.value() == ENODEV))
-                            ++op->stats.num_reg_s_enoent_enodev;
-                        if (op->verbose > 1) {
-                            pr3ser(lnk_pt, "fs::symlink_status() failed", ec);
+                        if ((v == ENOENT) || (v == ENODEV) || (v == ENXIO)) {
+                            ++op->stats.num_reg_s_enoent_enodev_enxio;
+                            if (verbose > 4)
+                                pr3ser(lnk_pt, "symlink_status() failed", ec);
+                        } else {
                             ++q->num_error;
+                            if (verbose > 2)
+                                pr3ser(lnk_pt, "symlink_status() failed", ec);
                         }
                         break;
                     }
@@ -644,44 +781,80 @@ do_clone(const struct opts_t * op)
 
                 fs::create_symlink(target_pt, lnk_pt, ec);
                 if (ec) {
-                    pr4ser(target_pt, lnk_pt, "create_symlink() failed", ec);
+                    if (verbose > 0)
+                        pr4ser(target_pt, lnk_pt, "create_symlink() failed",
+                               ec);
                     ++q->num_error;
-                } else if (op->verbose > 4)
-                    pr4ser(target_pt, lnk_pt, "create_symlink() ok");
+                } else {
+                    ++q->num_sym_d_success;
+                    if (verbose > 4)
+                        pr4ser(target_pt, lnk_pt, "create_symlink() ok");
+                }
             }
             break;
         case fs::file_type::regular:
+            if (exclude_entry)
+                continue;
             res = xfer_regular_file(pt, ongoing_destin_pt, op);
             if (res) {
                 ec.assign(res, std::system_category());
-                if (op->verbose > 3) {
+                if (verbose > 3) {
                     pr4ser(pt, ongoing_destin_pt, "xfer_regular_file() "
                            "failed", ec);
                     ++q->num_error;
                 }
-            } else if (op->verbose > 5)
+            } else if (verbose > 5)
                 pr4ser(pt, ongoing_destin_pt, "xfer_regular_file() ok");
             break;
         case fs::file_type::block:
         case fs::file_type::character:
+            if (exclude_entry)
+                continue;
             if (mknod(ongoing_destin_pt.c_str(), oth_stat.st_mode,
                       oth_stat.st_dev) < 0) {
                 res = errno;
                 ec.assign(res, std::system_category());
-                if (op->verbose > 3) {
+                if (verbose > 3) {
                     pr4ser(pt, ongoing_destin_pt, "mknod() failed", ec);
                     ++q->num_error;
                 }
-            } else if (op->verbose > 5)
+            } else if (verbose > 5)
                 pr4ser(pt, ongoing_destin_pt, "mknod() ok");
             break;
-        default:
+        case fs::file_type::fifo:
+        case fs::file_type::socket:
+            break;              // skip these file types
+        default:                // here when something no longer exists
+            switch (sl_ftype) {
+            case fs::file_type::directory:
+                if (op->max_depth_active && (depth >= op->max_depth)) {
+                    if (verbose > 2)
+                        scerr << "Source at max_depth: " << pt
+                              << " [" << depth << "], don't enter\n";
+                    itr.disable_recursion_pending();
+                }
+                break;
+            case fs::file_type::symlink:
+                if (verbose > 2)
+                    pr4ser(pt, "switch in switch symlink, skip");
+                break;
+            case fs::file_type::regular:
+                if (verbose > 2)
+                    pr4ser(pt, "switch in switch regular file, skip");
+                break;
+            default:
+                if (verbose > 2)
+                    scerr << pt << ", switch in switch sl_ftype: "
+                          << static_cast<int>(sl_ftype) << "\n";
+
+                break;
+            }
             break;
         }
     }
     if (ec) {
         if (beyond_for) {
-            if (op->verbose > 4)
+            if (verbose > 4)
                 pr3ser(op->source_pt, "problem already reported", ec);
         } else {
             ++q->num_error;
@@ -706,12 +879,12 @@ do_clone(const struct opts_t * op)
 int
 main(int argc, char * argv[])
 {
+    bool ex_glob_seen = false;
+    int c, res, glob_opt;
     std::error_code ec { };
-    const char * device_name = NULL;
     const char * destination_clone_start = NULL;
-    const char * exclude_pattern = NULL;
     const char * source_clone_start = NULL;
-    int c;
+    glob_t ex_paths { };
     struct opts_t opts { };
     struct opts_t * op = &opts;
 
@@ -733,12 +906,24 @@ main(int argc, char * argv[])
             op->no_destin = true;
             break;
         case 'e':
-            if (exclude_pattern) {
-                pr2ser("--exclude=PAT can only be given once, can use "
-                       "'{fn1,fn2, ... }' syntax instead\n");
-                return 1;
+            if (ex_glob_seen)
+                glob_opt = GLOB_APPEND;
+            else {
+                ex_glob_seen = true;
+                glob_opt = 0;
             }
-            exclude_pattern = optarg;
+            res = glob(optarg, glob_opt, NULL, &ex_paths);
+            if (res != 0) {
+                if ((res == GLOB_NOMATCH) && (verbose > 0))
+                    scerr << "Warning: --exclude=" << optarg
+                          << " did not match any file, continue\n";
+                else {
+                    globfree(&ex_paths);
+                    scerr << "glob() failed with --exclude=" << optarg
+                          << " , exit\n";
+                    return 1;
+                }
+            }
             break;
         case 'h':
             usage();
@@ -750,6 +935,10 @@ main(int argc, char * argv[])
             if (1 != sscanf(optarg, "%d", &op->max_depth)) {
                 pr2ser("unable to decode integer for --max-depth=MAXD");
                 return 1;
+            }
+            if (op->max_depth > 0) {
+                --op->max_depth;
+                op->max_depth_active = true;
             }
             break;
         case 'N':
@@ -769,25 +958,27 @@ main(int argc, char * argv[])
             op->want_stats = true;
             break;
         case 'v':
-            ++op->verbose;
+            ++verbose;
             break;
         case 'V':
-            std::cout << version_str << "\n";
+            scout << version_str << "\n";
             return 0;
         default:
-            std::cerr << "unrecognised option code 0x" << c << "\n";
+            scerr << "unrecognised option code 0x" << c << "\n";
             usage();
             return 1;
         }
     }
     if (optind < argc) {
+#if 0
         if (NULL == device_name) {
             device_name = argv[optind];
             ++optind;
         }
+#endif
         if (optind < argc) {
             for (; optind < argc; ++optind)
-                std::cerr << "Unexpected extra argument: " << argv[optind]
+                scerr << "Unexpected extra argument: " << argv[optind]
                           << "\n";
             usage();
             return 1;
@@ -799,11 +990,11 @@ main(int argc, char * argv[])
         if (fs::exists(pt, ec) && fs::is_directory(pt, ec)) {
             op->source_pt = fs::canonical(pt, ec);
             if (ec) {
-                pr3ser(pt, "fs::canonical() failed", ec);
+                pr3ser(pt, "canonical() failed", ec);
                 return 1;
             }
         } else if (ec) {
-            pr3ser(pt, "fs::exists() or fs::is_directory() failed", ec);
+            pr3ser(pt, "exists() or is_directory() failed", ec);
         } else {
             pr3ser(source_clone_start, "doesn't exist, is not a directory, "
                    "or ...", ec);
@@ -817,7 +1008,11 @@ main(int argc, char * argv[])
 
         if (op->destination_given)
             d_str = destination_clone_start;
-        else
+        else if (op->source_given) {
+            pr2ser("When --source= given, need also to give "
+                   "--destination= (or --no-dst)");
+            return 1;
+        } else
             d_str = def_destin_root;
         if (d_str.size() == 0) {
             pr2ser("Confused, what is destination? [Got empty string]");
@@ -829,7 +1024,7 @@ main(int argc, char * argv[])
             if (fs::is_directory(pt, ec)) {
                 op->destination_pt = fs::canonical(pt, ec);
                 if (ec) {
-                    pr3ser(pt, "fs::canonical() failed", ec);
+                    pr3ser(pt, "canonical() failed", ec);
                     return 1;
                 }
             } else {
@@ -842,13 +1037,13 @@ main(int argc, char * argv[])
             if (fs::exists(p_pt, ec) && fs::is_directory(p_pt, ec)) {
                 fs::create_directory(pt, ec);
                 if (ec) {
-                    pr3ser(pt, "fs::create_directory() failed", ec);
+                    pr3ser(pt, "create_directory() failed", ec);
                     return 1;
                 }
                 op->destination_pt = fs::canonical(pt, ec);
                 op->destin_all_new = true;
                 if (ec) {
-                    pr3ser(pt, "fs::canonical() failed", ec);
+                    pr3ser(pt, "canonical() failed", ec);
                     return 1;
                 }
             } else {
@@ -856,30 +1051,88 @@ main(int argc, char * argv[])
                 return 1;
             }
         }
+        if (op->source_pt == op->destination_pt) {
+            pr4ser(op->source_pt, op->destination_pt,
+                   "source and destination seem to be the same. That is not "
+                   "practical");
+            return 1;
+        }
+    } else if (op->destination_given) {
+        pr2ser("the --destination= and the --no-dst options contradict, "
+               "pick one");
+        return 1;
     }
-    if (exclude_pattern) {
-        glob_t paths { } ;
-        int res = glob(exclude_pattern, 0, NULL, &paths);
 
-        if (res == 0) {
-            for(size_t k { }; k < paths.gl_pathc; ++k )
-                op->exclude_v.push_back(paths.gl_pathv[k]);
-            globfree(&paths);
-            if (op->verbose > 0)
-                scerr << "--exclude= argument matched "
-		      << op->exclude_v.size() << " files\n";
-        } else if (res == GLOB_NOMATCH)
-            pr2ser("Warning: --exclude= argument did not match any "
-	           "file, continue");
-	else {
-            pr2ser("glob() failed with --exclude= argumen, exit");
-	    return 1;
-	}
+    auto ex_sz = op->exclude_v.size();  // will be zero here
+    bool destin_excluded = false;
+
+    if (ex_glob_seen) {
+        for(size_t k { }; k < ex_paths.gl_pathc; ++k) {
+            fs::path ex_pt { ex_paths.gl_pathv[k] };
+            fs::path c_ex_pt { fs::canonical(ex_pt, ec) };
+
+            if (ec) {
+                if (verbose > 1)
+                    pr3ser(ex_pt, "exclude path rejected", ec);
+            } else {
+                if (path_contains_canon(op->source_pt, c_ex_pt)) {
+                    op->exclude_v.push_back(c_ex_pt);
+                    if (verbose > 3)
+                        pr3ser(c_ex_pt, "accepted canonical exclude path");
+                    if (c_ex_pt == op->destination_pt)
+                        destin_excluded = true;
+                } else
+                    pr3ser(ex_pt, "ignored as not contained in source");
+            }
+        }
+        globfree(&ex_paths);
+        ex_sz = op->exclude_v.size();
+
+        if (verbose > 0)
+            scerr << "--exclude= argument matched " << ex_sz << " files\n";
+        if (ex_sz > 1) {
+            if (! std::ranges::is_sorted(op->exclude_v)) {
+                if (verbose > 0)
+                    pr2ser("need to sort exclude vector");
+                std::ranges::sort(op->exclude_v);
+            }
+            const auto ret = std::ranges::unique(op->exclude_v);
+            op->exclude_v.erase(ret.begin(), ret.end());
+            ex_sz = op->exclude_v.size();       // could be less after erase
+            if (verbose > 0)
+                scerr << "exclude vector size after sort then unique="
+                      << ex_sz << "\n";
+        }
+    }
+    if (! op->no_destin) {
+        if (path_contains_canon(op->source_pt, op->destination_pt)) {
+            pr2ser("Source contains destination, infinite recursion "
+                   "possible");
+            if ((op->max_depth == 0) && (ex_sz == 0)) {
+                pr2ser("exit, due to no --max-depth= and no --exclude=");
+                return 1;
+            } else if (! destin_excluded)
+                pr2ser("Probably best to --exclude= destination, will "
+                       "continue");
+        } else {
+            if (verbose > 0)
+                pr2ser("Source does NOT contain destination (good)");
+            if (path_contains_canon(op->destination_pt, op->source_pt)) {
+                pr2ser("Strange: destination contains source, is infinite "
+                       "recursion possible ?");
+                if (verbose > 2)
+                    pr2ser("destination does NOT contain source (also good)");
+            }
+        }
     }
 
     ec = do_clone(op);
     if (ec)
         pr2ser("do_clone() failed");
+    else if ((op->want_stats == false) && (op->destination_given == false) &&
+             (op->source_given == false) && (op->no_destin == false))
+        scout << "Successfully cloned " << sysfs_root << " to "
+              << def_destin_root << "\n";
 
     return 0;
 }
