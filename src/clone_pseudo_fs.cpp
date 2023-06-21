@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230620";
+static const char * const version_str = "0.90 20230621 [svn: r4]";
 
 #include <iostream>
 #include <fstream>
@@ -564,7 +564,7 @@ static std::error_code
 do_clone(const struct opts_t * op)
 {
     bool beyond_for = false;
-    bool possible_exclude = op->exclude_v.size() > 0;
+    bool possible_exclude = ! op->exclude_v.empty();
     bool exclude_entry;
     int res {} ;
 
@@ -630,8 +630,7 @@ do_clone(const struct opts_t * op)
                 ++q->num_error;
         }
 
-        sstring fn { pt.filename() };
-        bool me_hidden = ((fn.size() > 0) && (fn[0] == '.'));
+        bool me_hidden = ((! pt.empty()) && (pt.filename().string()[0] == '.'));
         fs::path sl_pt, c_sl_pt, rel_path;
 
         exclude_entry = false;
@@ -1020,6 +1019,8 @@ main(int argc, char * argv[])
         }
         fs::path pt { d_str };
 
+        if (pt.filename().empty())
+            pt = pt.parent_path(); // to handle trailing / as in /tmp/sys/
         if (fs::exists(pt, ec)) {
             if (fs::is_directory(pt, ec)) {
                 op->destination_pt = fs::canonical(pt, ec);

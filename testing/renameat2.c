@@ -35,7 +35,7 @@
  * The code in this file was obtained from https://gist.github.com/eatnumber1 .
  * The file is called renameat2.c and was fetched on 20230619. Thanks to Russel.
  * It doesn't work well with /sys as that file system instance is perpetually
- * busy, probably thanks to systemd, udev and other deamons.
+ * busy, probably thanks to systemd, udev and other daemons.
  * Another avenue to investigate is 'mount --move <olddir> <newdir>' but not
  * on my development machine :-)
  *               dpg 20230620

@@ -48,7 +48,6 @@ busily changing things, adding some directories, deleting others. The
 recursive directory scan (by default of /sys) uses C++17 filesystem library
 machinery and seems quite solid. That said, it is probably best to keep a
 system relatively "quiet" while a clone operation is taking place.
-.PP
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
 are arranged in alphabetical order based on the long option name. Hyphenated
@@ -71,19 +70,20 @@ It is assumed the \fIDPATH\fR will be in a "normal" storage type file system.
 Many pseudo file systems are not useful for general purpose storage by user
 space programs (e.g. sysfs; counter example: tmpfs).
 .br
-The long option \fI\-\-destination=DPATH\fR may be abbreviated to
-\fI\-\-dst=DPATH\fR .
+A trailing '/' on \fIDPATH\fR is ignored. The long option
+\fI\-\-destination=DPATH\fR may be abbreviated to \fI\-\-dst=DPATH\fR .
+.TP
 \fB\-e\fR, \fB\-\-exclude\fR=\fIPAT\fR
 supply one or more file locations in the \fISPATH\fR subtree that will be
 excluded from the clone operation. If such a location is a directory, then
-the subtree under it is not cloned. In this context \fIPAT\fR stands
-for "pattern" and the glob(3) system library call is used match 0 or more
-file locations that will be excluded.
+the subtree under it is not scanned nor cloned. In this context \fIPAT\fR
+stands for "pattern" and the glob(3) system library call is used to match 0
+or more file locations that will be excluded.
 .br
 This option may be given more than once. For example if trying to clone
 procfs, then excluding /proc/kmsg is needed, plus excluding all the
 process/task directories may help (e.g. \-\-exclude=/proc/[0-9]* ) plus the
-self directory.
+/proc/self directory.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Output the usage message and exit.
@@ -92,7 +92,7 @@ Output the usage message and exit.
 the default action of this utility is to skip (bypass) files and directories
 whose names start with "." . This applies to the recursive directory scan of
 \fISPATH\fR. It is a Unix convention to "hide" filenames this way.  There is
-x often some reason why filenames are hidden and most standard Unix
+often some reason why filenames are hidden and most standard Unix
 utilities (e.g. ls) will bypass them unless explicitly asked to include them.
 When this option is given hidden filenames are cloned and in the case where a
 hidden filename is a directory, then it is descended into.
@@ -126,17 +126,10 @@ probably comes from the struct stat:st_dev field that is used to implement
 its \-xdev functionality.
 .br
 In this utility the \-xdev functionality is the default action. Hence this
-option, x\fI\-\-no\-xdev\fR, allows the recursive directory scan to span
+option, \fI\-\-no\-xdev\fR, allows the recursive directory scan to span
 multiple file system instances. This option should be used with care.
 .TP
 \fB\-r\fR, \fB\-\-reglen\fR=\fIRLEN\fR
-Linux calls the regular files is sysfs "attributes". Linux documentation says
-that sysfs attributes (i.e. the contents of those regular files) should
-be "ASCII text files, preferably with only one value per file. It is noted
-that it may not be efficient to contain only one value per file, so  ...
-[longer strings are allowed]". The point is those file contents should be
-short. Naturally not all attributes comply.
-.br
 \fIRLEN\fR is the maximum length. in bytes, that is cloned (copied) from
 each each regular file found in \fISPATH\fR to the corresponding file in
 \fIDPATH\fR. The default value is 256. The minimum value the \fIRLEN\fR
@@ -148,13 +141,13 @@ file system.
 If \fIRLEN\fR is 0 then regular files under \fIDPATH\fR will be created (if
 permitted) but will be of zero length. If that regular file previously
 existed under \fIDPATH\fR and had non-zero length, then its length will now
-be truncated to 0. 
+be truncated to 0.
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
 \fISPATH\fR is the source of the clone (copy) operation. It must already
 exist and be either a directory or a symlink to a directory.
 .br
-The default source directory is /sys . If this option is given the either
+The default source directory is /sys . If this option is given then either
 the \fI\-\-destination=DPATH\fR option must also be given or the
 \fI\-\-no\-xdev\fR option must be given.
 .br
@@ -166,15 +159,14 @@ when this option is given over 30 counters accumulate data that is output
 to stdout once the clone operation has been completed (or hits a serious
 error). These counters are divided into two groups: the first group is
 only collecting data from the recursive directory scan of \fISPATH\fR. The
-second group collects data from \fIDPATH\fR operations including copying
-data from regular files. If the \fI\-\-no\-dst\fR option is also given 
+second group collects data from \fIDPATH\fR operations mainly copying
+data from regular files. If the \fI\-\-no\-dst\fR option is also given
 then only the first group are output.
 .br
 The long option \fI\-\-statistics\fR may be abbreviated to \fI\-\-stats\fR .
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
-outputs directory names where information is found. Use multiple times for
-more output.
+increase the level of verbosity, (i.e. debug output).
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 outputs version information then exits.
@@ -190,11 +182,11 @@ short with ASCII text. Naturally not all attributes comply.
 There is a practical reason for the \fI\-\-reglen=RLEN\fR option when the
 source is sysfs. In this case the file length given by the stat(2) system
 call is fictitious (i.e. a lie), usually 4096 or 0. This makes it hard to
-pre/-allocate a buffer for when the read(2) call actually fetches the data.
-There is a statistics counter called "Number of files \fIRLEN\fR bytes or
-longer"	which may help indicate if the \fIRLEN\fR setting is too low.
+pre/-allocate a buffer to receive the data that the read(2) call actually
+fetches. There is a statistics counter called "Number of files \fIRLEN\fR
+bytes or longer" which may help indicate if the \fIRLEN\fR setting is too low.
 .SH AUTHOR
-Written by Doug Gilbert
+Written by Douglas Gilbert
 .SH "REPORTING BUGS"
 Report bugs to <dgilbert at interlog dot com>.
 .SH COPYRIGHT
@@ -203,8 +195,9 @@ Copyright \(co 2023 Douglas Gilbert
 This software is distributed under a BSD\-2\-Clause license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 .SH "SEE ALSO"
-.B lsscsi(8)
-.B lspci
-.B lsusb
-.B lsblk
+.B lsscsi(8),
+.B lspci(8),
+.B lsusb(8),
+.B lsblk(8),
 .B read(2), stat(2) (Linux system calls),
+.B C++17 and later: filesystem library
