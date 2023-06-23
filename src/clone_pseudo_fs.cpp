@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230621 [svn: r4]";
+static const char * const version_str = "0.90 20230622 [svn: r5]";
 
 #include <iostream>
 #include <fstream>
@@ -32,11 +32,12 @@ static const char * const version_str = "0.90 20230621 [svn: r4]";
 #include <chrono>
 #include <cstring>              // needed for strstr()
 #include <cstdio>               // using sscanf()
-
+// Unix C headers below
 #include <unistd.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <poll.h>
 #include <sys/stat.h>
 
 #ifdef HAVE_CONFIG_H
@@ -87,6 +88,8 @@ struct stats_t {
     unsigned int num_reg_s_eio;
     unsigned int num_reg_s_enodata;
     unsigned int num_reg_s_enoent_enodev_enxio;
+    unsigned int num_reg_s_eagain;
+    unsigned int num_reg_s_timeout;
     unsigned int num_reg_s_e_other;
     unsigned int num_reg_d_eacces;
     unsigned int num_reg_d_eperm;
@@ -103,8 +106,10 @@ struct opts_t {
     bool clone_hidden;  // that is files starting with '.'
     bool no_xdev;       // xdev in find means don't scan outside original fs
     bool source_given;
+    bool wait_given;
     bool want_stats;
     unsigned int reglen;
+    unsigned int wait_ms;
     int max_depth;     // one less than given on cl
     // int verbose;    // make file scope
     mutable struct stats_t stats;
@@ -135,6 +140,7 @@ static const struct option long_options[] = {
     {"stats", no_argument, 0, 'S'},
     {"verbose", no_argument, 0, 'v'},
     {"version", no_argument, 0, 'V'},
+    {"wait", required_argument, 0, 'w'},
     {0, 0, 0, 0},
 };
 
@@ -151,6 +157,7 @@ static const char * const usage_message1 =
     "                       [--hidden] [--max-depth=MAXD] [--no-dst]\n"
     "                       [--no-xdev] [--reglen=RLEN] [--source=SPATH]\n"
     "                       [--statistics] [--verbose] [--version]\n"
+    "                       [--wait=MS_R]\n"
     "  where:\n"
     "    --destination=DPATH|-d DPATH    DPATH is clone destination (def:\n"
     "                                    /tmp/sys)\n"
@@ -174,12 +181,16 @@ static const char * const usage_message1 =
     "--no-dst)\n"
     "    --verbose|-v       increase verbosity\n"
     "    --version|-V       output version string and exit\n"
+    "    --wait=MS_R|-w MS_R    MS_R is number of milliseconds to wait on "
+    "each\n"
+    "                           regular file read(2) call (def: "
+    "indefinite)\n"
     "\n";
 
 static const char * const usage_message2 =
     "By default, this utility will clone /sys to /tmp/sys . The resulting "
     "subtree\nis a frozen snapshot that may be useful for later analysis. "
-    "Hidden files\nare skipped and symlinks are created, even if dangling."
+    "Hidden files\nare skipped and symlinks are created, even if dangling. "
     "The default is only\nto copy a maximum of 256 bytes of regular files."
     "\n";
 
@@ -308,6 +319,50 @@ path_contains(const fs::path & haystack, const fs::path & needle,
 }
 #endif
 
+// Returns number of bytes read, -1 for general error, -2 for timeout
+static int
+read_err_wait(int from_fd, uint8_t * bp, int err, const struct opts_t *op)
+{
+    int num = -1;
+
+    if (err == EAGAIN) {
+        ++op->stats.num_reg_s_eagain;
+        if (op->wait_given) {
+            struct pollfd a_pollfd = {0, POLLIN, 0};
+
+            a_pollfd.fd = from_fd;
+            int r = poll(&a_pollfd, 1, op->wait_ms);
+            if (r == 0) {
+                ++op->stats.num_reg_s_timeout;
+                return -2;
+            } else if (r > 0) {
+                if (a_pollfd.revents & POLLIN) {
+                    num = read(from_fd, bp, op->reglen);
+                    if (num >= 0)
+                        return num;
+                    else
+                        err = errno;
+                } else if (a_pollfd.revents & POLLERR)
+                    err = EPROTO;
+            }
+        }
+    }
+    if (err == EACCES)
+        ++op->stats.num_reg_s_eacces;
+    else if (err == EPERM)
+        ++op->stats.num_reg_s_eperm;
+    else if (err == EIO)
+        ++op->stats.num_reg_s_eio;
+    else if (err == ENODATA)
+        ++op->stats.num_reg_s_enodata;
+    else if ((err == ENOENT) || (err == ENODEV) || (err == ENXIO))
+        ++op->stats.num_reg_s_enoent_enodev_enxio;
+    else
+        ++op->stats.num_reg_s_e_other;
+
+    return num;
+}
+
 static int
 xfer_regular_file(const sstring & from_file, const sstring & destin_file,
                   const struct opts_t * op)
@@ -315,6 +370,7 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
     int res = 0;
     int from_fd = -1;
     int destin_fd = -1;
+    int rd_flags = O_RDONLY;
     int from_perms, num, num2;
     uint8_t * bp;
     const char * from_nm = from_file.c_str();
@@ -330,7 +386,9 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
     if (bp == nullptr)
         return ENOMEM;
 
-    from_fd = open(from_nm, O_RDONLY);
+    if (op->wait_given && (op->reglen > 0))
+        rd_flags |= O_NONBLOCK;
+    from_fd = open(from_nm, rd_flags);
     if (from_fd < 0) {
         res = errno;
         if (res == EACCES) {
@@ -367,25 +425,21 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
         goto fini;
     }
     from_perms = from_stat.st_mode & stat_perm_mask;
-    num = read(from_fd, bp, op->reglen);
-    if (num < 0) {
-        res = errno;
-        if (res == EACCES)
-            ++op->stats.num_reg_s_eacces;
-        else if (res == EPERM)
-            ++op->stats.num_reg_s_eperm;
-        else if (res == EIO)
-            ++op->stats.num_reg_s_eio;
-        else if (res == ENODATA)
-            ++op->stats.num_reg_s_enodata;
-        else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-            ++op->stats.num_reg_s_enoent_enodev_enxio;
-        else
-            ++op->stats.num_reg_s_e_other;
+    if (op->reglen > 0) {
+        num = read(from_fd, bp, op->reglen);
+        if (num < 0) {
+            res = errno;
+            num = read_err_wait(from_fd, bp, res, op);
+            if (num < 0) {
+                if ((num == -2) && (verbose > 0))
+                    pr3ser(from_file, "<< timed out waiting for this file");
+                num = 0;
+                close(from_fd);
+                goto do_destin;
+            }
+        }
+    } else
         num = 0;
-        close(from_fd);
-        goto do_destin;
-    }
     // closing now might help in this function is multi-threaded
     close(from_fd);
     if (static_cast<unsigned int>(num) >= op->reglen)
@@ -550,6 +604,10 @@ show_stats(const struct opts_t * op)
           << "\n";
     scout << "Number of source ENOENT, ENODEV or ENXIO errors: "
           << q->num_reg_s_enoent_enodev_enxio << "\n";
+    scout << "Number of source EAGAIN errors: " << q->num_reg_s_eagain
+          << "\n";
+    scout << "Number of source poll timeouts: " << q->num_reg_s_timeout
+          << "\n";
     scout << "Number of source other errors: " << q->num_reg_s_e_other
           << "\n";
     scout << "Number of dst EACCES errors: " << q->num_reg_d_eacces << "\n";
@@ -630,7 +688,8 @@ do_clone(const struct opts_t * op)
                 ++q->num_error;
         }
 
-        bool me_hidden = ((! pt.empty()) && (pt.filename().string()[0] == '.'));
+        bool me_hidden = ((! pt.empty()) &&
+                          (pt.filename().string()[0] == '.'));
         fs::path sl_pt, c_sl_pt, rel_path;
 
         exclude_entry = false;
@@ -866,7 +925,8 @@ do_clone(const struct opts_t * op)
     auto secs = ms / 1000;
     auto ms_remainder = ms % 1000;
     char b[32];
-    snprintf(b, sizeof(b), "%d.%03d", (int)secs, (int)ms_remainder);
+    snprintf(b, sizeof(b), "%d.%03d", static_cast<int>(secs),
+             static_cast<int>(ms_remainder));
     std:: cout << "Elapsed time: " << b << " seconds\n";
 
     if (op->want_stats)
@@ -891,7 +951,7 @@ main(int argc, char * argv[])
     while (1) {
         int option_index = 0;
 
-        c = getopt_long(argc, argv, "d:De:hHm:Nr:s:SvV", long_options,
+        c = getopt_long(argc, argv, "d:De:hHm:Nr:s:SvVw:", long_options,
                         &option_index);
         if (c == -1)
             break;
@@ -962,6 +1022,13 @@ main(int argc, char * argv[])
         case 'V':
             scout << version_str << "\n";
             return 0;
+        case 'w':
+            if (1 != sscanf(optarg, "%u", &op->wait_ms)) {
+                pr2ser("unable to decode integer for --reglen=RLEN");
+                return 1;
+            }
+            op->wait_given = true;
+            break;
         default:
             scerr << "unrecognised option code 0x" << c << "\n";
             usage();

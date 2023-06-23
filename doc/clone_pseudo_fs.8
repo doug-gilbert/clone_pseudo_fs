@@ -7,6 +7,7 @@ clone_pseudo_fs \- clone pseudo file systems like sysfs
 [\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR] [\fI\-\-no\-dst\fR]
 [\fI\-\-no\-xdev\fR] [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR]
 [\fI\-\-statistics\fR] [\fI\-\-verbose\fR] [\fI\-\-version\fR]
+[\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 The default action is to clone (copy) /sys and below to /tmp/sys . Only that
@@ -15,27 +16,28 @@ hidden files are ignored. Only a maximum of 256 bytes of regular files are
 copied. Symbolic links (symlinks), even dangling ones, are also copied. Most
 of these defaults can be changed by command line options.
 .PP
-Why do this? The author's motivation is USB-C PD information appearing in
+Why do this? The author's motivation is USB\-C PD information appearing in
 sysfs thanks to the ucsi_acpi driver in the Linux kernel. At time of writing
-this driver (or ACPI) is unstable, so (dis)connecting a USB-C cable is often
+this driver (or ACPI) is unstable, so (dis)connecting a USB\-C cable is often
 enough to freeze that driver (which rmmod followed by modprobe sometimes
 fixes). Trying to build tools on such an unstable platform is frustrating.
-So when a good USB-C PD configuration is correctly reflected in sysfs, best
+So when a good USB\-C PD configuration is correctly reflected in sysfs, best
 to clone it then point the tools under development at the copy, possibly
 tarred up and copied to another machine. Life would be easier if tools like
 lsusb and lspci could be taught to look somewhere other than /sys for the
-data-mining they currently do. Unless such tools are changing something,
+data\-mining they currently do. Unless such tools are changing something,
 they don't need to be looking at a real sysfs instance, something that has
 the same structure and attributes (perhaps a little outdated) will do.
 .PP
 Many horrible things can happen when copying subtrees, especially when
 SPATH contains DPATH or vice versa (e.g. cloning /tmp/sys to /tmp/sys/a2).
 There are some sanity checks but using the \fI\-\-max\-depth=MAXD\fR is
-probably the best defence. Also note that some pseudo file systems have
-waiting reads and are not suitable for this utility (e.g. tracefs usually
-found under /sys/kernel/trace ). If a pseudo file system has only a few
-waiting reads (e.g. procfs has one at /proc/kmsg) then the
-\fI\-\-exclude=PAT\fR can be used to bypass such trouble makers.
+probably the best defence. Note that some pseudo file systems have waiting
+reads and to cope with these the \fI\-\-wait=MS_R\fR option should be
+used (e.g. when cloning tracefs usually found under /sys/kernel/trace ).
+If a pseudo file system has only a few waiting reads (e.g. procfs has one
+at /proc/kmsg) then the \fI\-\-exclude=PAT\fR can be used to bypass the
+trouble makers.
 .PP
 Much useful information can be cloned from sysfs in Linux as a non\-root
 user. More information will be cloned as root but often that is not useful
@@ -48,6 +50,14 @@ busily changing things, adding some directories, deleting others. The
 recursive directory scan (by default of /sys) uses C++17 filesystem library
 machinery and seems quite solid. That said, it is probably best to keep a
 system relatively "quiet" while a clone operation is taking place.
+.PP
+The utility can be called by a non\-root user with workable results. Most
+data\-mining utilities in the "ls*" family are typically designed to obtain
+useful results without need root permissions. So a clone of /sys by a
+non\-root user, for example, may be used as alternative input to the "ls*"
+family if they have a "\-\-sysroot=" or "\-\-sysfsroot=" option.
+Also calling this utility as the root user will take longer and often
+run into more "waiting" reads.
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
 are arranged in alphabetical order based on the long option name. Hyphenated
@@ -140,7 +150,7 @@ file system.
 .br
 If \fIRLEN\fR is 0 then regular files under \fIDPATH\fR will be created (if
 permitted) but will be of zero length. If that regular file previously
-existed under \fIDPATH\fR and had non-zero length, then its length will now
+existed under \fIDPATH\fR and had non\-zero length, then its length will now
 be truncated to 0.
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
@@ -170,6 +180,28 @@ increase the level of verbosity, (i.e. debug output).
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 outputs version information then exits.
+.TP
+\fB\-w\fR, \fB\-\-wait\fR=\fIMS_R\fR
+\fIMS_R\fR is the maximum number of milliseconds to wait for a response on
+each read(2) of a regular file. If \fIMS_R\fR is reached before there is
+a response to the read(2) then a timeout is reported. The corresponding
+regular file under \fIDPATH\fR is created and will be zero length; if it
+already existed then it will be truncated to zero length. The default
+action is to wait indefinitely for 1 or more bytes of response, or an
+error to be reported.
+.br
+When this option is given (including \fIMS_R\fR being 0, which is valid)
+the O_NONBLOCK flag is set on the open(2) of the regular file to be
+read(2) (i.e. under \fISPATH\fR). Then if the associated read(2) yields
+an EAGAIN error (which has a statistics counter) then the poll(2) system
+call is invoked. It is possible that a pseudo file system does not properly
+implement the poll(2) infrastructure which is why the default (i.e. an
+indefinite wait) uses the simplest approach (i.e. no O_NONBLOCK nor
+invoking poll(2)).
+.br
+Additionally using the \fI\-\-verbose\fR option one or more times will
+output the filename (under \fISPATH\fR) of any regular file that times
+out during its read(2).
 .SH NOTES
 Some information about sysfs in Linux follows.
 Linux calls the regular files is sysfs "attributes". Linux documentation says
@@ -182,9 +214,14 @@ short with ASCII text. Naturally not all attributes comply.
 There is a practical reason for the \fI\-\-reglen=RLEN\fR option when the
 source is sysfs. In this case the file length given by the stat(2) system
 call is fictitious (i.e. a lie), usually 4096 or 0. This makes it hard to
-pre/-allocate a buffer to receive the data that the read(2) call actually
+pre\-allocate a buffer to receive the data that the read(2) call actually
 fetches. There is a statistics counter called "Number of files \fIRLEN\fR
 bytes or longer" which may help indicate if the \fIRLEN\fR setting is too low.
+.PP
+The /proc/kmsg file has been used as an example of a regular file that has
+a waiting read. It also has root\-only permissions so if this utility is
+being called to clone /proc as a non\-root user, then /proc/kmsg is not an
+issue.
 .SH AUTHOR
 Written by Douglas Gilbert
 .SH "REPORTING BUGS"

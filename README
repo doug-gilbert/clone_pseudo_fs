@@ -7,28 +7,31 @@ Introduction
 As the long package name and executable therein suggest, this utility is
 aimed at cloning (or copying) a pseudo file system (e.g. sysfs under /sys
 in Linux) to a normal storage file system (e.g. ext4 or btrfs in Linux).
+It defaults to copying /sys to /tmp/sys .
 
 For brevity "file system" will be abbreviated to FS and "pseudo file system"
 to PFS. The plural of both will have "_s" appended.
 
 The problem
 -----------
-But rsync already does clone/copy you may say. Try it! Various "features"
-of PFS_s will trip up find/tar/rsync . Here are a few:
+But rsync already does clone/copy you may say. Various "features" of PFS_s
+may trip up find/tar/rsync . Here are a few:
 
     - while most PFS_s are generally speaking "read-only", possibly apart
       from a small number of writable attribute files. Files including
       directories cannot be created or deleted. But that "read only"
-      applies only to the user space!  Rather than storing information for
-      later retrieval, PFS_s tend to be an interface between some aspect of
-      the OS (e.g. some of its drivers) and the user space. An intermittent
-      cable to a USB hub can cause USB devices to appear and disappear in
-      quick succession. And due to the device enumeration policy in Linux,
-      those devices may re-appear with a slightly different name. The
-      software to do a recursive directory scan of such a dynamic PFS needs
-      to be robust. This includes only failing when the iteration cannot
-      complete (e.g. when 'umount /sys' succeeds while /sys is being
-      scanned)
+      limitation only applies to the user space! Rather than storing
+      information for later retrieval, PFS_s tend to be an interface between
+      some aspect of the OS (e.g. some of its drivers) and the user space.
+      An intermittent cable to a USB hub can cause USB devices to appear
+      and disappear in quick succession. And due to the device enumeration
+      policy in Linux, those devices may re-appear with a slightly different
+      name. The software to do a recursive directory scan of such a dynamic
+      PFS needs to be robust. This includes only failing when the iteration
+      cannot complete (e.g. when 'umount /sys' succeeds while /sys is being
+      scanned). Counting and categorizing errors, which the iteration can
+      continue from, is a better policy than sending each error report to
+      stderr.
 
     - reads of regular files in PFS_s can be quite irregular.
       struct stat:st_size cannot be relied on (e.g. in sysfs (under /sys)
@@ -38,12 +41,19 @@ of PFS_s will trip up find/tar/rsync . Here are a few:
       handled properly.
 
     - some special options available in tar and find, specifically -xdev ,
-      are best to be defaults when cloning a PFS. For example tracefs
-      (typically mounted under /sys/kernel/trace) is not a good candidate
-      for cloning (due to lots of waiting reads) while sysfs (under /sys)
-      is a very good candidate.
+      are best to be defaults when cloning a PFS. The tracefs PFS
+      (typically mounted under /sys/kernel/trace) needs the --wait=MS_R
+      option to handle its waiting read(2)s while sysfs should clone
+      "out of the box" with no options. Cloning is often faster and
+      creates a smaller destination tree when performed by a non-root
+      user. And the cloned data may be sufficient to be processed by the
+      "ls*" family of utilities.
 
-    -
+    - tar(1) doesn't like spaces in filenames and sysfs contains lots of
+      such filenames. There are solutions using find(1) piped into xargs(1)
+      which invokes tar. If this is attempted on /sys it will still yield
+      a fraction of the files due to command line length truncation by
+      xargs.
 
 Why
 ---
@@ -108,4 +118,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-21st June 2023
+22nd June 2023
