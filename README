@@ -83,7 +83,7 @@ C++20 support was chosen because:
    - std::filesystem has a recursive_directory_iterator class which is exactly
      what is needed for scanning and copying FS trees
    - recursive_directory_iterator conveniently ignores obscure objects such as
-     the so-called "magic symlinks in /proc
+     the so-called "magic" symlinks in /proc
    - C++20 adds std::ranges and a second set of standard (STL) algorithms that
      are ranges aware and (slightly) better than the originals (due to 20 years
      experience with the latter). So, for example, the process of sorting all
@@ -118,4 +118,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-22nd June 2023
+29th June 2023

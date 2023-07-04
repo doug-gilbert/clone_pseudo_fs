@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230622 [svn: r5]";
+static const char * const version_str = "0.90 20230704 [svn: r6]";
 
 #include <iostream>
 #include <fstream>
@@ -643,20 +643,16 @@ do_clone(const struct opts_t * op)
     for (fs::recursive_directory_iterator itr(op->source_pt, dir_opt, ec);
          (! ec) && itr != end_itr;
          beyond_for = false, itr.increment(ec) ) {
-
         beyond_for = true;
-        const auto& entry { *itr };
-        // auto entry { *itr };
-        // fs::directory_entry entry { *itr };
+
         // since op->source_pt is in canonical form, assume entry.path()
         // will either be in canonical form, or absolute form if symlink
-        fs::path pt { entry.path() };
+        fs::path pt { itr->path() };
         auto depth = itr.depth();
 
         if (verbose > 6)
             pr3ser(pt, "about to scan this source entry");
-        fs::file_type sl_ftype = entry.symlink_status(ec).type();
-
+        fs::file_type sl_ftype = itr->symlink_status(ec).type();
         if (ec) {       // serious error
             ++q->num_error;
             if (verbose > 2)
@@ -668,17 +664,18 @@ do_clone(const struct opts_t * op)
             op->stats.max_depth = depth;
         fs::file_type targ_ftype = fs::file_type::none;
 
-        // this conditional is a sanity check, may be overkill
-        if (! path_contains_canon(op->source_pt, pt)) {
-            pr4ser(op->source_pt, pt, "is not contained in source path?");
-            break;
-        }
-        if (fs::exists(entry, ec)) {
-            targ_ftype = entry.status(ec).type();
+        if (fs::exists(*itr, ec)) {
+            targ_ftype = itr->status(ec).type();
             if (ec) {
                 if (verbose > 4)
                     pr3ser(pt, "status() failed, continue", ec);
                 ++q->num_error;
+            }
+            // this conditional is a sanity check, may be overkill
+            if ((sl_ftype == fs::file_type::symlink) &&
+		(! path_contains_canon(op->source_pt, pt))) {
+                pr4ser(op->source_pt, pt, "is not contained in source path?");
+                break;
             }
         } else {
             // expect sl_ftype to be symlink, so dangling target
