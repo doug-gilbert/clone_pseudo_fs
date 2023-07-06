@@ -1,4 +1,4 @@
-.TH CLONE_PSEUDO_FS "8" "June 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "July 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
 clone_pseudo_fs \- clone pseudo file systems like sysfs
 .SH SYNOPSIS
@@ -20,25 +20,24 @@ Why do this? The author's motivation is USB\-C PD information appearing in
 sysfs thanks to the ucsi_acpi driver in the Linux kernel. At time of writing
 this driver (or ACPI) is unstable, so (dis)connecting a USB\-C cable is often
 enough to freeze that driver (which rmmod followed by modprobe sometimes
-fixes). Trying to build tools on such an unstable platform is frustrating.
-So when a good USB\-C PD configuration is correctly reflected in sysfs, best
-to clone it, then point the tools under development at the copy. That copy
-may have come from a different machine of interest (transferred via tar+scp
-or rsync(1) ). Life would be simpler if tools like lsusb and lspci could be
+fixes). Trying to build tools on such an unstable platform is frustrating. So
+when a USB\-C PD configuration of interest is correctly reflected in sysfs,
+best to clone it, then point the tools under development at the copy. That
+copy may have come from a different machine (transferred via tar+scp or
+rsync(1) ). Life would be simpler if tools like lsusb and lspci could be
 taught to look somewhere other than /sys for the data\-mining they currently
 do. Unless such tools are changing something, they don't need to be looking
 at a real sysfs instance, something that has the same structure and
 attributes (perhaps a little outdated) will do.
 .PP
-Many horrible things can happen when copying subtrees, especially when
-SPATH contains DPATH or vice versa (e.g. cloning /tmp/sys to /tmp/sys/a2).
-There are some sanity checks but using the \fI\-\-max\-depth=MAXD\fR is
-probably the best defence. Note that some pseudo file systems have waiting
-reads and to cope with these the \fI\-\-wait=MS_R\fR option should be
-used (e.g. when cloning tracefs usually found under /sys/kernel/trace ).
-If a pseudo file system has only a few waiting reads (e.g. procfs has one
-at /proc/kmsg) then the \fI\-\-exclude=PAT\fR can be used to bypass the
-trouble makers.
+Many horrible things can happen when copying subtrees, especially when SPATH
+contains DPATH or vice versa (e.g. cloning /tmp/sys to /tmp/sys/a2). There
+are some sanity checks but using the \fI\-\-max\-depth=MAXD\fR is probably
+the best defence. Note that some pseudo file systems have waiting reads and
+to cope with these the \fI\-\-wait=MS_R\fR option should be used (e.g. when
+cloning tracefs usually found under /sys/kernel/trace ). If a pseudo file
+system has only a few waiting reads (e.g. procfs has one at /proc/kmsg) then
+the \fI\-\-exclude=PAT\fR can be used to bypass the trouble makers.
 .PP
 Much useful information can be cloned from sysfs in Linux as a non\-root
 user. More information will be cloned as root but often that is not useful
@@ -50,11 +49,11 @@ system only from the user space perspective, underneath the kernel may be
 busily changing things, adding some directories, deleting others. The
 recursive directory scan (by default of /sys) uses C++17 filesystem library
 machinery and seems quite solid. That said, it is probably best to keep a
-system relatively "quiet" while a clone operation is taking place.
+system relatively "quiet" while a clone operation of /sys is taking place.
 .PP
 The utility can be called by a non\-root user with workable results. Most
 data\-mining utilities in the "ls*" family are typically designed to obtain
-useful results without need root permissions. So a clone of /sys by a
+useful results without needing root permissions. So a clone of /sys by a
 non\-root user, for example, may be used as alternative input to the "ls*"
 family if they have a "\-\-sysroot=" or "\-\-sysfsroot=" option.
 Also calling this utility as the root user will take longer and often
@@ -223,15 +222,35 @@ The /proc/kmsg file has been used as an example of a regular file that has
 a waiting read. It also has root\-only permissions so if this utility is
 being called to clone /proc as a non\-root user, then /proc/kmsg is not an
 issue.
+.PP
+When cloning devfs (i.e. under /dev ) as a non\-root user, no block or
+character special file (device) will be created.
 .SH EXAMPLES
---sysfsroot versus --sysroot
-lsblk  (no mountpoint info)
-lsusb (only 'lsusb -t' works after minor edits
-lsscsi
-lsupd
-lsmem
-lscpu  (need procfs copied as well)
-clone_pseudo_fs
+When cloning procfs, the recursive directory scan will sometimes fail and
+exit while scanning one of the "process identify" (PID) directories which
+starts with a digit or /proc/self which is a symlink the the clone_pseudo_fs
+instance that is executing. The reason is most likely the scan was in a
+PID sub\-tree when that PID was removed. While other information in procfs
+may be useful getting a snapshot of, processes (task, threads) running when
+the clone was taken doesn't seem particularly worthwhile. So here is an
+invocation to exclude those PID directories:
+    $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
+\-\-exclude='/proc/[0-9]*' \-\-exclude=/proc/self \-\-stats
+.PP
+The first exclude option needs to be surrounded by quotes to stop the shell
+doing a glob expansion before clone_pseudo_fs is called. The second exclude
+is arguably not needed as its a symlink to a PID directory that has not been
+cloned (due to the first exclude). The above invocation will work for a
+non\-root user but seem to wait forever when invoked with root permissions.
+The reason is that /proc/kmsg is a waiting read. So the following invocation
+will work better:
+    $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
+\-\-exclude='/proc/[0-9]*' \-\-wait=0 \-\-stats
+.PP
+Rather than exclude /proc/kmsg explicitly, using \-\-wait=0 will catch
+all "waiting" reads. The statistics output will show one source poll timeout
+for each waiting read encountered. It is possible that more waiting reads
+will be added to procfs in the future.
 .SH AUTHOR
 Written by Douglas Gilbert
 .SH "REPORTING BUGS"
@@ -246,5 +265,6 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 .B lspci(8),
 .B lsusb(8),
 .B lsblk(8),
+.B lsmem(8),
 .B read(2), stat(2) (Linux system calls),
 .B C++17 and later: filesystem library

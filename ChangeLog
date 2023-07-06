@@ -1,5 +1,5 @@
 Linux utility for cloning pseudo filesystems like sysfs
 
-Changelog for pre-release clone_pseudo_fs-0.90 [20230704] [svn: r6]
+Changelog for pre-release clone_pseudo_fs-0.90 [20230705] [svn: r7]
   - build framework for cloning pseudo file systems utility
 

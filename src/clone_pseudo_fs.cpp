@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230704 [svn: r6]";
+static const char * const version_str = "0.90 20230705 [svn: r7]";
 
 #include <iostream>
 #include <fstream>
@@ -52,6 +52,7 @@ namespace chron = std::chrono;
 using sstring=std::string;
 static auto & scout { std::cout };
 static auto & scerr { std::cerr };
+static fs::path prev_rdi_p;
 
 static int verbose;  // don't want to pass 'struct opts_t' just to get this
 
@@ -65,7 +66,8 @@ struct stats_t {
     unsigned int num_sym2block;
     unsigned int num_sym2char;
     unsigned int num_sym_other;
-    unsigned int num_sym_hang;
+    unsigned int num_sym_s_dangle;
+    unsigned int num_oth_fs_skipped;
     unsigned int num_hidden_skipped;
     unsigned int num_regular;
     unsigned int num_block;
@@ -77,8 +79,10 @@ struct stats_t {
     unsigned int num_excluded;
     unsigned int num_dir_d_success;
     unsigned int num_sym_d_success;
+    unsigned int num_sym_d_dangle;
+    unsigned int num_mknod_d_fail;
     unsigned int num_error;
-    // above calculated during source scan (apart from *_d_success fields)
+    // above calculated during source scan (apart from *_d_* fields)
     // below calculated during transfer of regular files
     unsigned int num_reg_tries;       // only incremented when dst active
     unsigned int num_reg_success;
@@ -94,6 +98,7 @@ struct stats_t {
     unsigned int num_reg_d_eacces;
     unsigned int num_reg_d_eperm;
     unsigned int num_reg_d_eio;
+    unsigned int num_reg_d_enoent_enodev_enxio;
     unsigned int num_reg_d_e_other;
     int max_depth;
 };
@@ -107,10 +112,10 @@ struct opts_t {
     bool no_xdev;       // xdev in find means don't scan outside original fs
     bool source_given;
     bool wait_given;
-    bool want_stats;
     unsigned int reglen;
     unsigned int wait_ms;
     int max_depth;     // one less than given on cl
+    int want_stats;
     // int verbose;    // make file scope
     mutable struct stats_t stats;
     fs::path source_pt;         // a directory in canonical form
@@ -353,8 +358,6 @@ read_err_wait(int from_fd, uint8_t * bp, int err, const struct opts_t *op)
         ++op->stats.num_reg_s_eperm;
     else if (err == EIO)
         ++op->stats.num_reg_s_eio;
-    else if (err == ENODATA)
-        ++op->stats.num_reg_s_enodata;
     else if ((err == ENOENT) || (err == ENODEV) || (err == ENXIO))
         ++op->stats.num_reg_s_enoent_enodev_enxio;
     else
@@ -383,9 +386,10 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
         bp = fix_b;
     else
         bp = static_cast<uint8_t *>(malloc(op->reglen));
-    if (bp == nullptr)
+    if (bp == nullptr) {
+        ++op->stats.num_reg_s_e_other;
         return ENOMEM;
-
+    }
     if (op->wait_given && (op->reglen > 0))
         rd_flags |= O_NONBLOCK;
     from_fd = open(from_nm, rd_flags);
@@ -406,6 +410,7 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
                     ++op->stats.num_reg_s_e_other;
                 goto fini;
             }
+            res = 0;
             from_perms = from_stat.st_mode & stat_perm_mask;
             num = 0;
             goto do_destin;
@@ -434,6 +439,7 @@ xfer_regular_file(const sstring & from_file, const sstring & destin_file,
                 if ((num == -2) && (verbose > 0))
                     pr3ser(from_file, "<< timed out waiting for this file");
                 num = 0;
+                res = 0;
                 close(from_fd);
                 goto do_destin;
             }
@@ -456,6 +462,8 @@ do_destin:
                 ++op->stats.num_reg_d_eperm;
             else if (res == EIO)
                 ++op->stats.num_reg_d_eio;
+            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+                ++op->stats.num_reg_d_enoent_enodev_enxio;
             else
                 ++op->stats.num_reg_d_e_other;
             goto fini;
@@ -470,6 +478,8 @@ do_destin:
                 ++op->stats.num_reg_d_eperm;
             else if (res == EIO)
                 ++op->stats.num_reg_d_eio;
+            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+                ++op->stats.num_reg_d_enoent_enodev_enxio;
             else
                 ++op->stats.num_reg_d_e_other;
             goto fini;
@@ -485,6 +495,8 @@ do_destin:
                 ++op->stats.num_reg_d_eperm;
             else if (res == EIO)
                 ++op->stats.num_reg_d_eio;
+            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
+                ++op->stats.num_reg_d_enoent_enodev_enxio;
             else
                 ++op->stats.num_reg_d_e_other;
             goto fini;
@@ -521,7 +533,7 @@ update_stats(const fs::file_type & sl_ftype, const fs::file_type & targ_ftype,
         else if (targ_ftype == fs::file_type::character)
             ++op->stats.num_sym2char;
         else if (targ_ftype == fs::file_type::none)
-            ++op->stats.num_sym_hang;
+            ++op->stats.num_sym_s_dangle;
         else
             ++op->stats.num_sym_other;
         return;
@@ -531,7 +543,7 @@ update_stats(const fs::file_type & sl_ftype, const fs::file_type & targ_ftype,
         ++op->stats.num_dir;
         break;
     case fs::file_type::symlink:
-        ++op->stats.num_sym_hang;
+        ++op->stats.num_sym_s_dangle;
         break;
     case fs::file_type::regular:
         ++op->stats.num_regular;
@@ -557,27 +569,37 @@ update_stats(const fs::file_type & sl_ftype, const fs::file_type & targ_ftype,
 static void
 show_stats(const struct opts_t * op)
 {
+    bool extra = (op->want_stats > 1) || (verbose > 0);
+    bool eagain_likely = (op->wait_given && (op->reglen > 0));
     struct stats_t * q = &op->stats;
 
+    scout << "Statistics:\n";
     scout << "Number of regular files: " << q->num_regular << "\n";
     scout << "Number of directories: " << q->num_dir << "\n";
     scout << "Number of symlinks to directories: " << q->num_sym2dir << "\n";
     scout << "Number of symlinks to regular files: " << q->num_sym2reg
           << "\n";
-    scout << "Number of symlinks to block device nodes: "
-          << q->num_sym2block << "\n";
-    scout << "Number of symlinks to char device nodes: "
-          << q->num_sym2char << "\n";
+    if (extra) {
+        scout << "Number of symlinks to block device nodes: "
+              << q->num_sym2block << "\n";
+        scout << "Number of symlinks to char device nodes: "
+              << q->num_sym2char << "\n";
+    }
     scout << "Number of symlinks to others: " << q->num_sym_other << "\n";
-    scout << "Number of hanging symlinks: " << q->num_sym_hang
-          << " [may be resolved later in scan]\n";
+    scout << "Number of source dangling symlinks: " << q->num_sym_s_dangle
+          << "\n";
     scout << "Number of hidden files skipped: " << q->num_hidden_skipped
           << "\n";
+    if (! op->no_xdev)
+        scout << "Number of other file systems skipped: "
+              << q->num_oth_fs_skipped << "\n";
     scout << "Number of block device nodes: " << q->num_block << "\n";
     scout << "Number of char device nodes: " <<  q->num_char << "\n";
-    scout << "Number of fifo_s: " << q->num_fifo << "\n";
-    scout << "Number of sockets: " << q->num_socket << "\n";
-    scout << "Number of other file types: " << q->num_other << "\n";
+    if (extra) {
+        scout << "Number of fifo_s: " << q->num_fifo << "\n";
+        scout << "Number of sockets: " << q->num_socket << "\n";
+        scout << "Number of other file types: " << q->num_other << "\n";
+    }
     scout << "Number of filenames starting with '.': " << q->num_hidden
           << "\n";
     if (! op->no_destin) {
@@ -585,34 +607,41 @@ show_stats(const struct opts_t * op)
               << q->num_dir_d_success << "\n";
         scout << "Number of dst created symlinks: "
               << q->num_sym_d_success << "\n";
+        scout << "Number of dst dangling symlinks: " << q->num_sym_d_dangle
+              << " [may be resolved later in scan]\n";
+        if ((q->num_block + q->num_char) > 0)
+            scout << "Number of dst mknod failures: " << q->num_mknod_d_fail
+                  << "\n";
     }
     scout << "Number of files excluded: " << q->num_excluded << "\n";
     // N.B. recursive_directory_iterator::depth() is one less than expected
     scout << "Maximum depth of source scan: " << q->max_depth + 1 << "\n";
     scout << "Number of scan errors detected: " << q->num_error << "\n";
-    if (q->num_reg_tries == 0)
+    if (op->no_destin)
         return;
 
     scout << "\n>> Following associated with clone/copy of regular files\n";
-    scout << "Number of attempts to clone: " << q->num_reg_tries << "\n";
+    scout << "Number of attempts to clone a regular file: "
+          << q->num_reg_tries << "\n";
     scout << "Number of clone successes: " << q->num_reg_success << "\n";
-    scout << "Number of source EACCES errors: " << q->num_reg_s_eacces
-          << "\n";
-    scout << "Number of source EPERM errors: " << q->num_reg_s_eperm << "\n";
-    scout << "Number of source EIO errors: " << q->num_reg_s_eio << "\n";
-    scout << "Number of source ENODATA errors: " << q->num_reg_s_enodata
-          << "\n";
-    scout << "Number of source ENOENT, ENODEV or ENXIO errors: "
+    scout << "Number of source EACCES, EPERM, EIO errors: "
+          << q->num_reg_s_eacces << ", " << q->num_reg_s_eperm << ", "
+          << q->num_reg_s_eio << "\n";
+    scout << "Number of source ENOENT, ENODEV or ENXIO errors, combined: "
           << q->num_reg_s_enoent_enodev_enxio << "\n";
-    scout << "Number of source EAGAIN errors: " << q->num_reg_s_eagain
-          << "\n";
-    scout << "Number of source poll timeouts: " << q->num_reg_s_timeout
-          << "\n";
+    if (extra || eagain_likely) {
+        scout << "Number of source EAGAIN errors: " << q->num_reg_s_eagain
+              << "\n";
+        scout << "Number of source poll timeouts: " << q->num_reg_s_timeout
+              << "\n";
+    }
     scout << "Number of source other errors: " << q->num_reg_s_e_other
           << "\n";
-    scout << "Number of dst EACCES errors: " << q->num_reg_d_eacces << "\n";
-    scout << "Number of dst EPERM errors: " << q->num_reg_d_eperm << "\n";
-    scout << "Number of dst EIO errors: " << q->num_reg_d_eio << "\n";
+    scout << "Number of dst EACCES, EPERM, EIO errors: "
+          << q->num_reg_d_eacces <<  ", " << q->num_reg_d_eperm << ", "
+          << q->num_reg_d_eio << "\n";
+    scout << "Number of dst ENOENT, ENODEV or ENXIO errors, combined: "
+          << q->num_reg_d_enoent_enodev_enxio << "\n";
     scout << "Number of dst other errors: " << q->num_reg_d_e_other << "\n";
     scout << "Number of files " << op->reglen << " bytes or longer: "
           << q->num_reg_s_at_reglen << "\n";
@@ -648,6 +677,7 @@ do_clone(const struct opts_t * op)
         // since op->source_pt is in canonical form, assume entry.path()
         // will either be in canonical form, or absolute form if symlink
         fs::path pt { itr->path() };
+        prev_rdi_p = pt;
         auto depth = itr.depth();
 
         if (verbose > 6)
@@ -673,16 +703,18 @@ do_clone(const struct opts_t * op)
             }
             // this conditional is a sanity check, may be overkill
             if ((sl_ftype == fs::file_type::symlink) &&
-		(! path_contains_canon(op->source_pt, pt))) {
+                (! path_contains_canon(op->source_pt, pt))) {
                 pr4ser(op->source_pt, pt, "is not contained in source path?");
                 break;
             }
         } else {
             // expect sl_ftype to be symlink, so dangling target
-            if (verbose > 4)
-                pr3ser(pt, "fs::exists() failed, continue", ec);
-            if (ec)
+            if (ec) {
                 ++q->num_error;
+                if (verbose > 4)
+                    pr3ser(pt, "fs::exists() failed, continue", ec);
+            } else if (verbose > 1)
+                pr3ser(pt, "<< does not exis, continue");
         }
 
         bool me_hidden = ((! pt.empty()) &&
@@ -697,7 +729,7 @@ do_clone(const struct opts_t * op)
             if (exclude_entry && (verbose > 3))
                 pr3ser(pt, "matched for exclusion");
         }
-        if (op->want_stats)
+        if (op->want_stats > 0)
             update_stats(sl_ftype, targ_ftype, me_hidden, op);
         if (op->no_destin) {
             if ((sl_ftype == fs::file_type::directory) &&
@@ -738,6 +770,7 @@ do_clone(const struct opts_t * op)
                         scout << "Source trying to leave this fs instance "
                                  "at: " << pt << "\n";
                     itr.disable_recursion_pending();
+                    ++q->num_oth_fs_skipped;
                 }
             }
             if (exclude_entry) {
@@ -777,6 +810,19 @@ do_clone(const struct opts_t * op)
                 ++q->num_error;
                 break;
             } else {
+                fs::perms s_pms = itr->status().permissions();
+                if ((s_pms & fs::perms::owner_write) !=
+                    fs::perms::owner_write) {
+                    // if source directory doesn't have owner_write then
+                    // make sure destination does.
+                    fs::permissions(ongoing_destin_pt, fs::perms::owner_write,
+                                    fs::perm_options::add, ec);
+                    if (ec) {
+                        pr3ser(ongoing_destin_pt, "couldn't add owner_write "
+                               "perm", ec);
+                        ++q->num_error;
+                    }
+                }
                 ++q->num_dir_d_success;
                 if (verbose > 4)
                     pr3ser(pt, "create_directory() ok");
@@ -844,6 +890,15 @@ do_clone(const struct opts_t * op)
                     ++q->num_sym_d_success;
                     if (verbose > 4)
                         pr4ser(target_pt, lnk_pt, "create_symlink() ok");
+                    fs::path abs_target_pt = prox_pt / target_pt;
+                    if (fs::exists(abs_target_pt, ec)) {
+                        if (verbose > 4)
+                            pr3ser(abs_target_pt, "<< symlink target exists");
+                    } else if (ec) {
+                        pr3ser(abs_target_pt, "fs::exists() failed", ec);
+                        ++q->num_error;
+                    } else
+                        ++op->stats.num_sym_d_dangle;
                 }
             }
             break;
@@ -871,8 +926,8 @@ do_clone(const struct opts_t * op)
                 ec.assign(res, std::system_category());
                 if (verbose > 3) {
                     pr4ser(pt, ongoing_destin_pt, "mknod() failed", ec);
-                    ++q->num_error;
                 }
+                ++q->num_mknod_d_fail;
             } else if (verbose > 5)
                 pr4ser(pt, ongoing_destin_pt, "mknod() ok");
             break;
@@ -913,7 +968,8 @@ do_clone(const struct opts_t * op)
                 pr3ser(op->source_pt, "problem already reported", ec);
         } else {
             ++q->num_error;
-            pr3ser(op->source_pt, "recursive_directory_iterator() failed", ec);
+            pr3ser(prev_rdi_p,
+                   "<< previous, recursive_directory_iterator() failed", ec);
         }
     }
 
@@ -926,7 +982,7 @@ do_clone(const struct opts_t * op)
              static_cast<int>(ms_remainder));
     std:: cout << "Elapsed time: " << b << " seconds\n";
 
-    if (op->want_stats)
+    if (op->want_stats > 0)
         show_stats(op);
     return ec;
 }
@@ -1011,7 +1067,7 @@ main(int argc, char * argv[])
             op->source_given = true;
             break;
         case 'S':
-            op->want_stats = true;
+            ++op->want_stats;
             break;
         case 'v':
             ++verbose;
@@ -1132,6 +1188,8 @@ main(int argc, char * argv[])
     bool destin_excluded = false;
 
     if (ex_glob_seen) {
+        bool first_reported = false;
+
         for(size_t k { }; k < ex_paths.gl_pathc; ++k) {
             fs::path ex_pt { ex_paths.gl_pathv[k] };
             fs::path c_ex_pt { fs::canonical(ex_pt, ec) };
@@ -1146,8 +1204,11 @@ main(int argc, char * argv[])
                         pr3ser(c_ex_pt, "accepted canonical exclude path");
                     if (c_ex_pt == op->destination_pt)
                         destin_excluded = true;
-                } else
-                    pr3ser(ex_pt, "ignored as not contained in source");
+                } else if ((! first_reported) || (verbose > 0)) {
+                    pr3ser(ex_pt,
+                           "ignored as not contained in exclude source");
+                    first_reported = true;
+                }
             }
         }
         globfree(&ex_paths);
@@ -1194,7 +1255,7 @@ main(int argc, char * argv[])
     ec = do_clone(op);
     if (ec)
         pr2ser("do_clone() failed");
-    else if ((op->want_stats == false) && (op->destination_given == false) &&
+    else if ((op->want_stats == 0) && (op->destination_given == false) &&
              (op->source_given == false) && (op->no_destin == false))
         scout << "Successfully cloned " << sysfs_root << " to "
               << def_destin_root << "\n";

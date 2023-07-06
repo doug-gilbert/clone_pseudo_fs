@@ -1,13 +1,13 @@
 
-                        clone_pseudo_fs
-                        ===============
+                            clone_pseudo_fs
+                            ===============
 
 Introduction
 ------------
 As the long package name and executable therein suggest, this utility is
 aimed at cloning (or copying) a pseudo file system (e.g. sysfs under /sys
 in Linux) to a normal storage file system (e.g. ext4 or btrfs in Linux).
-It defaults to copying /sys to /tmp/sys .
+This utility defaults to copying /sys to /tmp/sys .
 
 For brevity "file system" will be abbreviated to FS and "pseudo file system"
 to PFS. The plural of both will have "_s" appended.
@@ -30,12 +30,12 @@ may trip up find/tar/rsync . Here are a few:
       PFS needs to be robust. This includes only failing when the iteration
       cannot complete (e.g. when 'umount /sys' succeeds while /sys is being
       scanned). Counting and categorizing errors, which the iteration can
-      continue from, is a better policy than sending each error report to
-      stderr.
+      continue from, is a better policy for PFS cloning than sending each
+      error report to stderr.
 
     - reads of regular files in PFS_s can be quite irregular.
-      struct stat:st_size cannot be relied on (e.g. in sysfs (under /sys)
-      that value is 0 or 4096 irrespective of the amount of data that can
+      struct stat:st_size cannot be relied on (e.g. in sysfs (under /sys)).
+      Its value is 0 or 4096 irrespective of the amount of data that can
       actually be read. Some regular files in PFS_s have "waiting" reads
       (e.g. /proc/kmsg) that will hang a recursive directory scan unless
       handled properly.
@@ -75,7 +75,7 @@ sysadmin's system as /mnt/machine1 then lsblk --sysroot=/mnt/machine1 should
 list machine1's block devices.
 
 Implementation
-==============
+--------------
 The clone_pseudo_fs is written in C++ after various attempts with bash scripts.
 C++20 support was chosen because:
    - C++17 introduced the std::filesystem library which both g++ and clang++
@@ -85,22 +85,20 @@ C++20 support was chosen because:
    - recursive_directory_iterator conveniently ignores obscure objects such as
      the so-called "magic" symlinks in /proc
    - C++20 adds std::ranges and a second set of standard (STL) algorithms that
-     are ranges aware and (slightly) better than the originals (due to 20 years
-     experience with the latter). So, for example, the process of sorting all
-     the exclude paths, making sure they are unique (i.e. removing duplicates)
-     and later doing a binary search on it, is shorter to code than this
-     sentence.
+     are ranges aware and that are (slightly) better than the originals (due to
+     20 years experience with the originals). So, for example, the process of
+     sorting all the exclude paths, making sure they are unique (i.e. removing
+     duplicates) and later doing a binary search on it, is shorter to code than
+     this sentence.
    - std::filesystem supports both throwing exceptions and yielding errors via
      an error_code object. The implementer can choose either and this one chose
      the error_code approach. The error_code approach seems to lead to finer
      grain error reporting but does lead to some non-obvious code, for example
      ++itr is replaced by itr.increment(ec) .
 
-TBD
-
 
 Building package
-================
+----------------
 Installation instructions are in the INSTALL file.
 
 Various options can be given to the ./configure script. Those
@@ -118,4 +116,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-29th June 2023
+5th July 2023
