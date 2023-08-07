@@ -1,15 +1,19 @@
-.TH CLONE_PSEUDO_FS "8" "July 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "August 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
-clone_pseudo_fs \- clone pseudo file systems like sysfs
+clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
 .B clone_pseudo_fs
-[\fI\-\-destination=DPATH\fR] [\fI\-\-exclude=PAT\fR] [\fI\-\-help\fR]
+[\fI\-\-cache\fR] [\fI\-\-dereference=SPTSYM\fR] [\fI\-\-destination=DPATH\fR]
+[\fI\-\-exclude=PAT\fR] [\fI\-\-extreme\fR] [\fI\-\-help\fR]
 [\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR] [\fI\-\-no\-dst\fR]
 [\fI\-\-no\-xdev\fR] [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR]
 [\fI\-\-statistics\fR] [\fI\-\-verbose\fR] [\fI\-\-version\fR]
 [\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
+This is a Linux command line utility specialized for cloning pseudo file
+systems such as sysfs which is typically mounted under /sys .
+.PP
 The default action is to clone (copy) /sys and below to /tmp/sys . Only that
 file system instance is copied (e.g. not /sys/kernel/debug and below).
 Hidden files are ignored. Only a maximum of 256 bytes in regular files is
@@ -30,39 +34,78 @@ do. Unless such tools are changing something, they don't need to be looking
 at a real sysfs instance, something that has the same structure and
 attributes (perhaps a little outdated) will do.
 .PP
-Many horrible things can happen when copying subtrees, especially when SPATH
-contains DPATH or vice versa (e.g. cloning /tmp/sys to /tmp/sys/a2). There
-are some sanity checks but using the \fI\-\-max\-depth=MAXD\fR is probably
-the best defence. Note that some pseudo file systems have waiting reads and
-to cope with these the \fI\-\-wait=MS_R\fR option should be used (e.g. when
-cloning tracefs usually found under /sys/kernel/trace ). If a pseudo file
-system has only a few waiting reads (e.g. procfs has one at /proc/kmsg) then
-the \fI\-\-exclude=PAT\fR can be used to bypass the trouble makers.
+Many horrible things can happen when copying subtrees, especially when
+\fISPATH\fR contains \fIDPATH\fR or vice versa (e.g. cloning /tmp/sys
+to /tmp/sys/a2). There are some sanity checks but using the
+\fI\-\-max\-depth=MAXD\fR is probably the best defence. Note that some pseudo
+file systems have waiting reads and to cope with these the \fI\-\-wait=MS_R\fR
+option should be used (e.g. when cloning tracefs usually found
+under /sys/kernel/trace ). If a pseudo file system has only a few waiting
+reads (e.g. procfs has one at /proc/kmsg) then the \fI\-\-exclude=PAT\fR can
+be used to bypass the trouble makers.
 .PP
-Much useful information can be cloned from sysfs in Linux as a non\-root
-user. More information will be cloned as root but often that is not useful
-information and slows the clone operation a bit. Calling this utility
-a "snapshot" copy would be a bit of a stretch as it takes between 5 and
-10 seconds on a recent laptop. And that is more than enough time for the
-kernel to change many settings within sysfs. Sysfs is a "read\-only" file
-system only from the user space perspective, underneath the kernel may be
-busily changing things, adding some directories, deleting others. The
-recursive directory scan (by default of /sys) uses C++17 filesystem library
-machinery and seems quite solid. That said, it is probably best to keep a
-system relatively "quiet" while a clone operation of /sys is taking place.
+Calling this utility a "snapshot" copy would be a bit of a stretch as it
+takes between 5 and 10 seconds on a recent laptop. And that is more than
+enough time for the kernel to change many settings within sysfs. Sysfs is
+a "read\-only" file system only from the user space perspective, underneath
+the kernel may be busily changing things, adding some directories, deleting
+others. The recursive directory scan (by default of /sys) uses C++17
+filesystem library machinery and seems quite solid. That said, it is probably
+best to keep a system relatively "quiet" while a clone operation of /sys is
+taking place.
 .PP
 The utility can be called by a non\-root user with workable results. Most
 data\-mining utilities in the "ls*" family are typically designed to obtain
 useful results without needing root permissions. So a clone of /sys by a
 non\-root user, for example, may be used as alternative input to the "ls*"
-family if they have a "\-\-sysroot=" or "\-\-sysfsroot=" option.
-Also calling this utility as the root user will take longer and often
-run into more "waiting" reads.
+family if they have a "\-\-sysroot=" or "\-\-sysfsroot=" option. Also calling
+this utility as the root user will take longer and often run into
+more "waiting" reads.
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
 are arranged in alphabetical order based on the long option name. Hyphenated
 long options can also take underscore, and vice versa (e.g.
 \fI\-\-no\-xdev\fR or \fI\-\-no_xdev\fR) instead.
+.TP
+\fB\-c\fR, \fB\-\-cache\fR
+perform a two pass clone/copy. The first pass copies the selected directories
+to a tree based structure held in ram (memory). Each 'node' in that tree
+consumes a little over 120 bytes. The contents of regular file (see
+\fI\-\-reglen=RLEN\fR) is not copied if this option is given once. If this
+option is given two or more times, the contents of each regular file is
+copies into the memory based tree.
+.br
+A second pass "unrolls" the in\-memory tree representation into the
+destination (i.e. it creates nodes under \fIDPATH\fR).
+.br
+The reason for a two pass method is that since \fISPATH\fR is assumed to be
+a pseudo file system, it could be changing rapidly in response to events in
+the system. Since it is not practical to freeze (or lock) a pseudo file
+system while it is cloned, the next best approach is to reduce the time taken
+to scan \fISPATH\fR. As a rough estimation, scanning directories is faster
+than opening (or creating) files.
+.TP
+\fB\-R\fR, \fB\-\-dereference\fR=\fISPTSYM\fR
+\fISPTSYM\fR is assumed to be a symbolic link under \fISPATH\fR. During the
+recursive directory scan (of \fISPATH\fR), symbolic links are visited but the
+ scan does 'descend' into the target of the symbolic link even if that target
+is itself a directory. If a symbolic link does match \fISPTSYM\fR then a new
+directory is created in \fIDPATH\fR with the link name of \fISPTSYM\fR and
+this utility descends into \fISPTSYM\fR's target name and copies it. This is
+sometimes called a 'deep' copy.
+.br
+This option may be given many times, any \fISPTSYM\fR that does not match a
+symlink under \fISPATH\fR is discarded, as are duplicates. As soon as a match
+is found on a \fISPTSYM\fR argument then that value is discarded from the
+list (of \fISPTSYM\fRs) that each symbolic link in the scan is checked
+against. This will stop symlink "cycles" causing infinite recursion.
+.br
+Notice that this option (\fI\-\-dereference=SPTSYM\fR]) only acts on exact
+matches on symlinks while the \fI\-\-exclude=PAT\fR option accepts patterns
+that are subject to "glob" expansion and can match any type of node.
+.br
+The long option \fI\-\-dereference=SPTSYM\fR may be shortened to
+\fI\-\-deref=SPTSYM\fR .
 .TP
 \fB\-d\fR, \fB\-\-destination\fR=\fIDPATH\fR
 \fIDPATH\fR is the destination of the clone (copy) operation. If it already
@@ -70,30 +113,32 @@ exists, it must be a directory (or a symlink to a directory). If it does not
 exist, then its parent directory must exist, in which case the \fIDPATH\fR
 directory will be created.
 .br
-The default destination directory is /tmp/sys and per the above rules,
-if /tmp exists (it should) and /tmp/sys doesn't exist then the directory
-/tmp/sys is created. Once the \fI\-\-source=SPATH\fR option is given then
-either this option must be specified or the \fI\-\-no\-dst\fR option must
-be given.
+The default destination directory is /tmp/sys and per the above rules, if /tmp
+exists (it should) and /tmp/sys doesn't exist then the directory /tmp/sys is
+created. Once the \fI\-\-source=SPATH\fR option is given then either this
+option must be specified or the \fI\-\-no\-dst\fR option must be given.
 .br
 It is assumed the \fIDPATH\fR will be in a "normal" storage type file system.
 Many pseudo file systems are not useful for general purpose storage by user
 space programs (e.g. sysfs; counter example: tmpfs).
 .br
 A trailing '/' on \fIDPATH\fR is ignored. The long option
-\fI\-\-destination=DPATH\fR may be abbreviated to \fI\-\-dst=DPATH\fR .
+\fI\-\-destination=DPATH\fR may be shortened to \fI\-\-dst=DPATH\fR .
 .TP
 \fB\-e\fR, \fB\-\-exclude\fR=\fIPAT\fR
 supply one or more file locations in the \fISPATH\fR subtree that will be
 excluded from the clone operation. If such a location is a directory, then
 the subtree under it is not scanned nor cloned. In this context \fIPAT\fR
-stands for "pattern" and the glob(3) system library call is used to match 0
-or more file locations that will be excluded.
+stands for "pattern" and the glob(3) system library call is used to match
+zero or more file locations that will be excluded.
 .br
 This option may be given more than once. For example if trying to clone
 procfs, then excluding /proc/kmsg is needed, plus excluding all the
 process/task directories may help (e.g. \-\-exclude=/proc/[0-9]* ) plus the
 /proc/self directory.
+.TP
+\fB\-x\fR, \fB\-\-extra\fR
+does some extra sanity checks which may slow down the clone a little.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Output the usage message and exit.
@@ -101,9 +146,9 @@ Output the usage message and exit.
 \fB\-H\fR, \fB\-\-hidden\fR
 the default action of this utility is to skip (bypass) files and directories
 whose names start with "." . This applies to the recursive directory scan of
-\fISPATH\fR. It is a Unix convention to "hide" filenames this way.  There is
+\fISPATH\fR. It is a Unix convention to "hide" filenames this way. There is
 often some reason why filenames are hidden and most standard Unix
-utilities (e.g. ls) will bypass them unless explicitly asked to include them.
+utilities (e.g. ls) will bypass them unless explicitly asked to list them.
 When this option is given hidden filenames are cloned and in the case where a
 hidden filename is a directory, then it is descended into.
 .TP
@@ -129,6 +174,9 @@ value) that would otherwise occur. The recursive directory scan of
 collected. So this option is useful together with the \fI\-\-statistics\fR
 option.
 .TP
+This option may also be used with the \fI\-\-cache\fR option in which case
+the first pass creating the in\-memory tree occurs but the second pass does
+not occur.
 \fB\-N\fR, \fB\-\-no\-xdev\fR
 the find(1) command has an option called \-xdev which will stop its recursive
 directory scan leaving the file system instance that it start with. That name
@@ -137,7 +185,8 @@ its \-xdev functionality.
 .br
 In this utility the \-xdev functionality is the default action. Hence this
 option, \fI\-\-no\-xdev\fR, allows the recursive directory scan to span
-multiple file system instances. This option should be used with care.
+multiple file system instances. This option should be used with care as
+different file systems often have different characteristics.
 .TP
 \fB\-r\fR, \fB\-\-reglen\fR=\fIRLEN\fR
 \fIRLEN\fR is the maximum length. in bytes, that is cloned (copied) from
@@ -152,6 +201,11 @@ If \fIRLEN\fR is 0 then regular files under \fIDPATH\fR will be created (if
 permitted) but will be of zero length. If that regular file previously
 existed under \fIDPATH\fR and had non\-zero length, then its length will now
 be truncated to 0.
+.br
+Note that in pseudo file systems the st_size member returned by invoking
+the stat(2) system call on a regular file is misleading. The data read from
+a regular file in this context is effectively created at the point that the
+read(2) system call is invoked and is not known before that point.
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
 \fISPATH\fR is the source of the clone (copy) operation. It must already
@@ -161,19 +215,19 @@ The default source directory is /sys . If this option is given then either
 the \fI\-\-destination=DPATH\fR option must also be given or the
 \fI\-\-no\-xdev\fR option must be given.
 .br
-The long option \fI\-\-source=SPATH\fR may be abbreviated to
+The long option \fI\-\-source=SPATH\fR may be shortened to
 \fI\-\-src=SPATH\fR .
 .TP
 \fB\-S\fR, \fB\-\-statistics\fR
-when this option is given over 30 counters accumulate data that is output
+when this option is given over 40 counters accumulate data that is output
 to stdout once the clone operation has been completed (or hits a serious
 error). These counters are divided into two groups: the first group is
 only collecting data from the recursive directory scan of \fISPATH\fR. The
 second group collects data from \fIDPATH\fR operations mainly copying
 data from regular files. If the \fI\-\-no\-dst\fR option is also given
-then only the first group are output.
+then only the first group is output.
 .br
-The long option \fI\-\-statistics\fR may be abbreviated to \fI\-\-stats\fR .
+The long option \fI\-\-statistics\fR may be shortened to \fI\-\-stats\fR .
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
 increase the level of verbosity, (i.e. debug output).
@@ -183,12 +237,12 @@ outputs version information then exits.
 .TP
 \fB\-w\fR, \fB\-\-wait\fR=\fIMS_R\fR
 \fIMS_R\fR is the maximum number of milliseconds to wait for a response on
-each read(2) of a regular file. If \fIMS_R\fR is reached before there is
-a response to the read(2) then a timeout is reported. The corresponding
-regular file under \fIDPATH\fR is created and will be zero length; if it
-already existed then it will be truncated to zero length. The default
-action is to wait indefinitely for 1 or more bytes of response, or an
-error to be reported.
+each read(2) system call on a regular file. If \fIMS_R\fR is reached before
+there is a response to the read(2) then a timeout is reported. The
+corresponding regular file under \fIDPATH\fR is created and will be zero
+length; if it already existed then it will be truncated to zero length.
+The default action is to wait indefinitely for 1 or more bytes of response,
+assuming that no error is reported.
 .br
 When this option is given (including \fIMS_R\fR being 0, which is valid)
 the O_NONBLOCK flag is set on the open(2) of the regular file to be
@@ -210,7 +264,7 @@ be "ASCII text files, preferably with only one value per file. It is noted
 that it may not be efficient to contain only one value per file, so  ...
 [longer strings are allowed]". The point is those file contents should be
 short with ASCII text. Naturally not all attributes comply.
-.br
+.PP
 There is a practical reason for the \fI\-\-reglen=RLEN\fR option when the
 source is sysfs. In this case the file length given by the stat(2) system
 call is fictitious (i.e. a lie), usually 4096 or 0. This makes it hard to
@@ -235,7 +289,7 @@ may be useful getting a snapshot of, processes (task, threads) running when
 the clone was taken doesn't seem particularly worthwhile. So here is an
 invocation to exclude those PID directories:
     $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
-\-\-exclude='/proc/[0-9]*' \-\-exclude=/proc/self \-\-stats
+\-\-exclude='/proc/[0-9]*' \-\-deref=/proc/self \-\-stats
 .PP
 The first exclude option needs to be surrounded by quotes to stop the shell
 doing a glob expansion before clone_pseudo_fs is called. The second exclude

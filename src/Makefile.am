@@ -8,7 +8,7 @@ bin_PROGRAMS = clone_pseudo_fs
 ## CC = clang
 ## CC = clang++
 ## CXX = g++
-## CXX = clang++
+CXX = clang++
 
 if DEBUG
 # This is active if --enable-debug given to ./configure
