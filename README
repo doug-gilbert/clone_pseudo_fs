@@ -34,7 +34,7 @@ may trip up find/tar/rsync . Here are a few:
       error report to stderr.
 
     - reads of regular files in PFS_s can be quite irregular.
-      struct stat:st_size cannot be relied on (e.g. in sysfs (under /sys)).
+      struct stat::st_size cannot be relied on (e.g. in sysfs (under /sys)).
       Its value is 0 or 4096 irrespective of the amount of data that can
       actually be read. Some regular files in PFS_s have "waiting" reads
       (e.g. /proc/kmsg) that will hang a recursive directory scan unless
@@ -116,4 +116,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-5th July 2023
+7th August 2023

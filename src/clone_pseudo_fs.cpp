@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.95 20230807 [svn: r8]";
+static const char * const version_str = "0.95 20230807 [svn: r9]";
 
 #include <iostream>
 #include <fstream>
@@ -2277,61 +2277,33 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
                         a_dir.depth = depth;
                         auto ind = l_odirp->add_to_sdir_v(a_dir, filename,
                                                           a_shstat);
-                        if (ind >= 0) {
-                            l_odirp = std::get_if<inmem_dir_t>(
-                                        &l_odirp->sdirs_sp->sdir_v
-                                                [ind].derived);
-                            if (l_odirp) {
-                                const auto ctspt
-                                        { canon_targ_s_pt.string() + "\n" };
-                                const char * ccp { ctspt.c_str() };
-                                const uint8_t * bp
-                                   { reinterpret_cast<const uint8_t *>(ccp) };
-                                std::vector<uint8_t> v(bp, bp + ctspt.size());
-                                inmem_regular_t a_reg;
+                        l_odirp = std::get_if<inmem_dir_t>(
+                                    &l_odirp->sdirs_sp->sdir_v
+                                            [ind].derived);
+                        if (l_odirp) {
+                            const auto ctspt
+                                    { canon_targ_s_pt.string() + "\n" };
+                            const char * ccp { ctspt.c_str() };
+                            const uint8_t * bp
+                               { reinterpret_cast<const uint8_t *>(ccp) };
+                            std::vector<uint8_t> v(bp, bp + ctspt.size());
+                            inmem_regular_t a_reg;
 
-                                a_reg.contents.swap(v);
-                                a_reg.always_use_contents = true;
-                                short_stat b_shstat { a_shstat };
-                                b_shstat.st_mode &= ~stat_perm_mask;
-                                b_shstat.st_mode |= def_file_perm;
-                                l_odirp->add_to_sdir_v(a_reg, symlink_src_tgt,
-                                                       b_shstat);
-                                ++depth;
-                                ecc = cache_src(depth, l_odirp,
-                                                canon_targ_s_pt, op);
-                                --depth;
-                                if (ecc)
-                                    return ecc;
-                            }
-                            l_odirp = prev_odirp;
+                            a_reg.contents.swap(v);
+                            a_reg.always_use_contents = true;
+                            short_stat b_shstat { a_shstat };
+                            b_shstat.st_mode &= ~stat_perm_mask;
+                            b_shstat.st_mode |= def_file_perm;
+                            l_odirp->add_to_sdir_v(a_reg, symlink_src_tgt,
+                                                   b_shstat);
+                            ++depth;
+                            ecc = cache_src(depth, l_odirp,
+                                            canon_targ_s_pt, op);
+                            --depth;
+                            if (ecc)
+                                return ecc;
                         }
-#if 0
-                        // create dir when src is symlink and follow active
-                        // no problem if already exists
-                        fs::create_directory(d_lnk_pt, ec);
-                        if (ec) {
-                            if (verbose > 0)
-                                pr3ser(d_lnk_pt, "create_directory() failed",
-                                       ec);
-                            ++q->num_error;
-                            break;
-                        }
-                        const fs::path deep_d_pt
-                                { ongoing_destin_pt / d_lnk_pt };
-
-                        // N.B. recursive call!
-                        if (op->max_depth_active &&
-                            (dc_depth >= op->max_depth)) {
-                            scerr << "clone_work() hits max_depth: "
-                                  << canon_targ_s_pt << " [" << dc_depth
-                                  << "], don't enter\n";
-                            ++q->num_error;
-                            ecc.assign(ELOOP, std::system_category());
-                            return ecc;  // propagate
-                        }
-#endif
-// write to symlink_tgt_fn contents of target_pt.filename()
+                        l_odirp = prev_odirp;
                     }
                     break;
                 }

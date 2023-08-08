@@ -8,7 +8,7 @@ bin_PROGRAMS = clone_pseudo_fs
 ## CC = clang
 ## CC = clang++
 ## CXX = g++
-CXX = clang++
+## CXX = clang++
 
 if DEBUG
 # This is active if --enable-debug given to ./configure
@@ -27,8 +27,8 @@ endif
 ## AM_CFLAGS = -I$(top_srcdir)/include -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -Wall -W
 
 # -std=<s> can be c99, c11, gnu11, etc.
-###AM_CPPFLAGS = -iquote ${top_srcdir}/src -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 $(DBG_CPPFLAGS)
-### AM_CFLAGS = -Wall -W $(DBG_CFLAGS)
+AM_CPPFLAGS = -iquote ${top_srcdir}/src -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 $(DBG_CPPFLAGS)
+AM_CFLAGS = -Wall -W $(DBG_CFLAGS)
 # AM_CFLAGS = -Wall -W -fanalyzer $(DBG_CFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c99
 # AM_CFLAGS = -Wall -W -pedantic -std=c11
