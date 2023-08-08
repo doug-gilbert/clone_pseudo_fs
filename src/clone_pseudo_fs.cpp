@@ -18,7 +18,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.95 20230807 [svn: r9]";
+static const char * const version_str = "0.95 20230807 [svn: r10]";
 
 #include <iostream>
 #include <fstream>
@@ -27,6 +27,7 @@ static const char * const version_str = "0.95 20230807 [svn: r9]";
 #include <vector>
 #include <map>
 #include <ranges>
+#include <variant>
 #include <algorithm>            // needed for ranges::sort()
 #include <source_location>
 #include <chrono>
