@@ -58,21 +58,19 @@ may trip up find/tar/rsync . Here are a few:
 Why
 ---
 The author wrote the lsscsi utility which has a --sysfsroot=PATH option that
-has been useful in testing. Now the author is working on lsupd to collect
+has been useful in testing. Now the author is working on lsucpd to collect
 USB-C PD (power delivery) information. That depends on the ucsi_acpi driver
 which is currently very "fragile" (sometimes rmmod followed by modprobe
 unlocks it). An alternative is to setup various USB-C PD pieces of equipment
 and when everything is stable, clone /sys . Then further testing can be done
 against the stable clone/copy. Also the author foresees users reporting that
-lsupd gives incorrect output when my xxxxx is connected to my yyyyy. Getting
+lsucpd gives incorrect output when my xxxxx is connected to my yyyyy. Getting
 a clone/copy of that user's /sys will be helpful in debugging that issue
 (security be damned).
 
-lsblk and lscpu have a --sysroot=PATH option that seems aimed at the situation
-where the whole file system (i.e. from '/' down) is network mounted (nfs ?)
-on another system. So if machine1's file system is network mounted on a
-sysadmin's system as /mnt/machine1 then lsblk --sysroot=/mnt/machine1 should
-list machine1's block devices.
+lsblk and lscpu have a --sysroot=PATH option that is used in the util-linux
+test suite. That code can be found at
+https://github.com/util-linux/util-linux .
 
 Implementation
 --------------

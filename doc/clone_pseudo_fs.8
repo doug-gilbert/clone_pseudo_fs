@@ -58,8 +58,8 @@ The utility can be called by a non\-root user with workable results. Most
 data\-mining utilities in the "ls*" family are typically designed to obtain
 useful results without needing root permissions. So a clone of /sys by a
 non\-root user, for example, may be used as alternative input to the "ls*"
-family if they have a "\-\-sysroot=" or "\-\-sysfsroot=" option. Also calling
-this utility as the root user will take longer and often run into
+family if they have a "\-\-sysroot DIR" or "\-\-sysfsroot=DIR" option. Also
+calling this utility as the root user will take longer and often run into
 more "waiting" reads.
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
@@ -173,7 +173,7 @@ value) that would otherwise occur. The recursive directory scan of
 \fISPATH\fR still takes place and about half of the normal statistics are
 collected. So this option is useful together with the \fI\-\-statistics\fR
 option.
-.TP
+.br
 This option may also be used with the \fI\-\-cache\fR option in which case
 the first pass creating the in\-memory tree occurs but the second pass does
 not occur.
@@ -256,7 +256,160 @@ invoking poll(2)).
 Additionally using the \fI\-\-verbose\fR option one or more times will
 output the filename (under \fISPATH\fR) of any regular file that times
 out during its read(2).
-.SH NOTES
+.SH SYMBOLIC LINKS AND DIRECTORIES
+Most storage file systems have some form of symbolic link (symlink) support.
+The DOS FAT file system does not have symlink support and it is still
+widely used. A bit like a parachute, symlinks are not needed most of the
+time, but in one situation, a parachute is extremely useful.
+.PP
+The situation in pseudo file systems is a bit different as symbolic
+links play an essential role. In the case of sysfs in Linux, there is
+arguably as much information in its symbolic links, as there is in its
+regular files.
+.PP
+Symlinks are a little tricky to handle when cloning a pseudo file system,
+especially sysfs, when the hardware is disappearing and re-appearing (e.g.
+when the "uplink" cable between a USB hub and a computer is disconnected
+by accident and then reconnected). The clone/copy operations is termed
+as "recursive descent" which when a directory is detected in the source,
+a directory of the same name is created in the corresponding position of
+the destination. The algorithm then "descends" into the source directory
+copying each entry into the destination. The "ls -f" command in Linux shows
+the native order in which a directory holds its contents and this is the
+order that this utility uses when cloning.
+.PP
+Symlinks have two parts: its link name and its target name. The target
+name is where it "goes" and that location in the destination may not
+exist for several reasons. The main reason is that the recursive descent
+algorithm may not have reach where the target name points. The other
+reason is changes in the underlying hardware which sysfs (for example)
+is trying to mirror have removed that target name location.
+So\-called "dangling" symlinks need to be created as its target name
+location may be created later in the clone operation. However that is
+not guaranteed. In a changing hardware environment the time between
+when a symlink is created (using its link name) and resolved (i.e.
+when its target name is created) may be measured in seconds, and that
+timespan increases the chance that something has changed.
+.PP
+If this is indeed found to be a problem, using the
+\fI\-\-dereference=SPTSYM\fR option to turn that symlink into a directory
+may be considered. As explained above, the "recursive descent" nature of
+the clone operation means that the files under a directory are scanned
+within milliseconds or less after their parent directory is found.
+.SH DEREFERENCE AND EXCLUDE
+These options are designed so that \fI\-\-dereference=SPTSYM\fR is as narrow
+as possible while \fI\-\-exclude=PAT\fR is as broad as possible. The former
+increases the size of the clone which will slow the clone operation down.
+[Even worse they could lead to cycles which would continue indefinitely,
+but the \fI\-\-max\-depth=MAXD\fR option will stop such a cycle, if given.]
+The latter (i.e. exclusions) will reduce the size of the clone which will
+speed up the clone operation.
+.PP
+If the plan is to tar/zip up the clone and send it to a remote location on
+the internet to debug, then excluding sub\-trees can remove information
+about hardware.  This may be important for security reasons if the machine
+with the problem holds sensitive data or has special hardware. Linux pseudo
+file systems typically don't hold user data, rather they hold metadata (or
+data about data).
+.PP
+When a single invocation uses both the \fI\-\-dereference=SPTSYM\fR and the
+\fI\-\-exclude=PAT\fR options, the result is typically what one would
+hope for. A good example is cloning procfs as the numbered directories are
+process identifiers (PIDs) running on the system at the time of the clone.
+Cloning these takes a fair amount of time and space and it is hard to see
+how that information could be useful for remote debugging. However (there is
+always a 'but') the lsblk utility inspects the /proc/self/mountinfo file
+and 'self' is a symbolic link to the PID of the process accessing that file.
+So a good approach is to exclude all paths that start with a digit at the
+top level (e.g. '/proc/1/') and dereference the symbolic link '/proc/self/'.
+The invocation might look like this:
+    clone_pseudo_fs \-s /proc \-d /tmp/pr \-e '/proc/[0-9]*' \-r /proc/self
+.PP
+For sake of argument assume 'self' is a symbolic link to PID 1234 so that
+would be /proc/1234 . But that would match the exclude pattern, do they
+cancel out? [The argument to \-e is in single quotes to stop the shell
+expanding that glob, in this case this utility expands it.]
+.br
+No, they do not cancel out, /tmp/pr/1234/* will noT appear but /tmp/pr/self/*
+will appear and the '*' will be the same sub\-tree. However something has
+been lost: the fact that self's PID was 1234 . Although this may not be
+important in this case (i.e. to trick lsblk) it may be important in other
+cases. For this reason, clone_pseudo_fs creates a file in the destination
+under the \fISPTSYM\fR directory. This file is called
+0_symlink_source_target and it contains the source's symbolic link target
+name. In this case the contents of that file would be '/proc/1234' .
+.SH CLONING SYSFS
+An instance of the sysfs file pseudo file system is typically mounted under
+the /sys directory in Linux. So many utilities and tools like systemd
+expect sysfs in that location that Linux would probably be inoperable if
+sysfs is not present at that location.
+.PP
+The defaults of this utility are chosen so that invoking this utility
+without options will clone /sys int /tmp/sys . This will occur whether this
+utility is invoked by a root (superuser) or non\-root user. Many of
+the "ls*" family of utilities will work without elevated user privileges
+so invoking this utility as a non\-root user may be sufficient. Another
+advantage of a non\-root clone is that sensitive files under \fISPATH\fR
+protected by file permissions will not be cloned and thus will not
+appear in the destination under \fIDPATH\fR.
+.PP
+It seems that all the symlink targets in sysfs stay within sysfs.
+Counter\-examples? The other pseudo file systems listed below have symlink
+targets outside their file system. For example /proc/self/root is a symlink
+which usually targets '/' .
+.SH CLONING PROCFS
+The pseudo file system called procfs is typically mounted under /proc and
+primarily contains directories named for the Process Identifiers (PIDs)
+currently running in the host machine. It also contains "other stuff" some
+of which has been relocated to sysfs over time. [Procfs existed in Linux
+before sysfs did.] It is rumoured that more "other stuff" may be migrated
+to sysfs in the future.
+.PP
+An important symlink in the top level directory under /proc is called "self".
+It links to PID of the process that read /proc . That process might be
+multi\-threaded so there is also a symlink called "threaded\-self". One
+might think cloning these PID directories would not be much use for doing
+remote debugging but somewhat surprisingly lsblk accesses
+/proc/self/mountinfo .
+.PP
+Those PID directories contain, amongst other things, symlinks representing
+every open file descriptor of each PID. Without the default regular
+file read length of 256 bytes or a smallish value set with the
+\fI\-\-reglen=RLEN\fR option, cloning procfs in full could/would fill
+up the file system. Actually just cloning /proc/self itself is probably
+sufficient (because this utility maintains an open file descriptor to
+\fIDPATH\fR).
+.PP
+One problematic file is /proc/kmsg which is a "waiting" read. This can
+be handled with the \fI\-\-wait=MS_R\fR option. In testing \-\-wait=0
+seems to be sufficient. The /proc/kmsg file needs root permissions to read
+so if this utility is run as a non\-root user, that problem disappears.
+.SH CLONING DEVFS
+A file system called "devfs" was removed a long time ago in Linux and
+replaced by the devtmpfs file system which is typically controlled by the
+udevd daemon. For simplicity the name "devfs" will be used here to describe
+the file system mounted under /dev .
+.PP
+The mknod Unix command and a system call of the same name creates 'block'
+and 'character' (aka 'char') devices under /dev . Both versions of mknod
+need root permissions so that running this utility as a non\-root user
+will create a clone/copy with no block or char devices in it. There is
+other useful information such as the symlinks under the /dev/block and
+/dev/char directories. Those symlinks show a reverse mapping from major
+and minor numbers (separated by a ':') to the device node name in their
+parent directory. Each symlink link name is the 'major:minor' number and
+the symlink target name is the path to the device node name. When this
+utility clones /dev as a non\-root user those device node names will not
+be present so those symlinks will be "dangling". But it doesn't matter,
+the required information about that (reverse mapping) relation is present
+in each symlink.
+.PP
+Devfs has a relatively small number of nodes compared to sysfs and procfs
+hence cloning it should be fast with few problems encountered. One thing
+to note is that it does contain symlinks to other file systems such as
+/dev/core (target: /proc/core ), /dev/initctl (target: /run/initctl) and
+stdin/stdout/stderr (targets: /proc/self/fd/0 , 1 and 2) amongst others.
+ SH NOTES
 Some information about sysfs in Linux follows.
 Linux calls the regular files is sysfs "attributes". Linux documentation says
 that sysfs attributes (i.e. the contents of those regular files) should
@@ -305,6 +458,24 @@ Rather than exclude /proc/kmsg explicitly, using \-\-wait=0 will catch
 all "waiting" reads. The statistics output will show one source poll timeout
 for each waiting read encountered. It is possible that more waiting reads
 will be added to procfs in the future.
+.PP
+The lsblk utility has a \-\-sysroot= option that expects to find both
+sysfs and procfs under the argument given to that option. So if
+\-\-sysroot=/tmp then lsblk expects to find /tmp/sys and /tmp/proc
+appropriately populated. That can be done with this sequence:
+    $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
+\-\-exclude='/proc/[0-9]*' \-\-deref=/proc/self \-\-reglen=8192
+.PP
+    $ clone_pseudo_fs \-\-src=/sys \-\-dst=/tmp/sys
+.PP
+    $ lsblk \-\-sysroot /tmp
+.PP
+lsblk is looking for this file: /tmp/proc/self/mouninfo which can be 30 lines
+or longer. That is why the \-\-reglen=8192 option is needed and may need
+to be larger. That file is needed by lsblk to populate the MOUNTPOINTS
+column. Notice that some utilities taking long options that have an
+associated argument can optionally take an "=" between the option and its
+argument (e.g. this utility) while others don't (e.g. lsblk and lsmem).
 .SH AUTHOR
 Written by Douglas Gilbert
 .SH "REPORTING BUGS"
