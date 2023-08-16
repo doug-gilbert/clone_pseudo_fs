@@ -4,11 +4,10 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
 .B clone_pseudo_fs
 [\fI\-\-cache\fR] [\fI\-\-dereference=SPTSYM\fR] [\fI\-\-destination=DPATH\fR]
-[\fI\-\-exclude=PAT\fR] [\fI\-\-extreme\fR] [\fI\-\-help\fR]
-[\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR] [\fI\-\-no\-dst\fR]
-[\fI\-\-no\-xdev\fR] [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR]
-[\fI\-\-statistics\fR] [\fI\-\-verbose\fR] [\fI\-\-version\fR]
-[\fI\-\-wait=MS_R\fR]
+[\fI\-\-exclude=PAT\fR] [\fI\-\-extra\fR] [\fI\-\-help\fR] [\fI\-\-hidden\fR]
+[\fI\-\-max\-depth=MAXD\fR] [\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR]
+[\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR] [\fI\-\-statistics\fR]
+[\fI\-\-verbose\fR] [\fI\-\-version\fR] [\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 This is a Linux command line utility specialized for cloning pseudo file
@@ -145,12 +144,23 @@ Output the usage message and exit.
 .TP
 \fB\-H\fR, \fB\-\-hidden\fR
 the default action of this utility is to skip (bypass) files and directories
-whose names start with "." . This applies to the recursive directory scan of
-\fISPATH\fR. It is a Unix convention to "hide" filenames this way. There is
-often some reason why filenames are hidden and most standard Unix
-utilities (e.g. ls) will bypass them unless explicitly asked to list them.
+whose names start with "." Additionally a directory filename starting with
+a '.' is not descended (scanned) into. This applies to the recursive
+directory scan of \fISPATH\fR. It is a Unix convention to "hide" filenames
+this way. There is often some reason why filenames are hidden and most
+standard Unix utilities (e.g. ls) will bypass them unless explicitly asked
+to list them.
+.br
 When this option is given hidden filenames are cloned and in the case where a
 hidden filename is a directory, then it is descended into.
+.br
+Note that the special filenames '.' (single character) and '..' (two
+characters) do not appear in this recursive scan. They can be thought of as
+command line shortcuts rather than real files. That said '..' may appear in
+a relative path (e.g. the target name of a symlink) but can (almost) always
+be transformed into a 'canonical' pathname that starts at the root (i.e. so
+it is absolute (rather than relative)) and contains no symlinks or instances
+of '.' or '..' .
 .TP
 \fB\-m\fR, \fB\-\-max\-depth\fR=\fIMAXD\fR
 every time the recursive directory scan of \fISPATH\fR descends into a
@@ -262,13 +272,12 @@ The DOS FAT file system does not have symlink support and it is still
 widely used. A bit like a parachute, symlinks are not needed most of the
 time, but in one situation, a parachute is extremely useful.
 .PP
-The situation in pseudo file systems is a bit different as symbolic
-links play an essential role. In the case of sysfs in Linux, there is
-arguably as much information in its symbolic links, as there is in its
-regular files.
+In many pseudo file systems, symbolic links play an essential role. In the
+case of sysfs in Linux, there is arguably as much information in its
+symbolic links, as there is in its regular files.
 .PP
 Symlinks are a little tricky to handle when cloning a pseudo file system,
-especially sysfs, when the hardware is disappearing and re-appearing (e.g.
+especially sysfs, where the hardware is disappearing and re-appearing (e.g.
 when the "uplink" cable between a USB hub and a computer is disconnected
 by accident and then reconnected). The clone/copy operations is termed
 as "recursive descent" which when a directory is detected in the source,

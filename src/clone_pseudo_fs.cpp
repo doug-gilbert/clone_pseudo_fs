@@ -15,10 +15,9 @@
  *
  */
 
-
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.95 20230810 [svn: r11]";
+static const char * const version_str = "0.95 20230815 [svn: r12]";
 
 #include <iostream>
 #include <fstream>
@@ -26,6 +25,8 @@ static const char * const version_str = "0.95 20230810 [svn: r11]";
 #include <filesystem>
 #include <vector>
 #include <map>
+#include <bit>
+#include <span>
 #include <ranges>
 #include <variant>
 #include <algorithm>            // needed for ranges::sort()
@@ -45,19 +46,28 @@ static const char * const version_str = "0.95 20230810 [svn: r11]";
 #include "config.h"
 #endif
 
-static const unsigned int def_reglen = 256;
+static const unsigned int def_reglen { 256 };
 
 namespace fs = std::filesystem;
 namespace chron = std::chrono;
 
-using sstring=std::string;
+using sstring = std::string;
 
-// "Base" class object of type inmem_t physically contains one of the 6
-// "derived" class objects of type inmem_*_t using a std::variant named
-// inmem_t::derived . C++ (virtual or plain) inheritance is _not_ used.
-struct inmem_t;
+// The "inmem*" structs are associated with using the '--cache' option.
+// Files are divided into 6 categories: regular, directory, symlink,
+// device (char or block), fifo_or_socket and other. Data in common is
+// placed in the inmem_base_t struct. A std::variant called inm_var_t
+// holds one of these variants. Then the inmem_t struct is derived from
+// that variant. inmem_t holds no data directory but it has constructors
+// to make instances that contain one of the six categories. The simplest
+// category is "other" and its is named first in the variant and should
+// not appear in the "unroll"-ed tree.
+
+// Forward declarations
+// struct inmem_t;
 struct inmem_subdirs_t;
 struct inmem_dir_t;
+
 struct opts_t;
 
 static auto & scout { std::cout };
@@ -71,180 +81,23 @@ static int verbose;  // don't want to pass 'struct opts_t' just to get this
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
-// This template function does the dirty work of an upcast (i.e. Der -> B)
-// including using offsetof() to cope if the inmem_t::derived field (i.e.
-// the variant object) is not the first object in inmem_t .
-template <typename B, typename Der>
-    const B * get_t_base_cp(const Der * dp);
-
-template <typename B, typename Der>
-    B * get_t_base_p(Der * dp);
 
 struct short_stat {     // stripped down version of 'struct stat'
     dev_t   st_dev;     // ID of device containing file
     mode_t  st_mode;    // File type and mode
 };
 
-struct inmem_other_t {
-    inmem_other_t() = default;
+struct inmem_base_t {
+    inmem_base_t() = default;
 
-    // no data members
-
-    struct inmem_t * get_basep() { return reinterpret_cast<inmem_t *>(this); }
-    const struct inmem_t * get_basep() const
-                 { return reinterpret_cast<const inmem_t *>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_symlink_t {
-    inmem_symlink_t() = default;
-
-    fs::path target;
-
-    const struct inmem_t * get_basep() const
-                { return get_t_base_cp<inmem_t, inmem_symlink_t>(this); }
-    struct inmem_t * get_basep()
-                { return get_t_base_p<inmem_t, inmem_symlink_t>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_device_t { // block of char
-    bool is_block_dev { false };
-
-    dev_t st_rdev { };
-
-    const struct inmem_t * get_basep() const
-                { return get_t_base_cp<inmem_t, inmem_device_t>(this); }
-    struct inmem_t * get_basep()
-                { return get_t_base_p<inmem_t, inmem_device_t>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_fifo_socket_t {
-    // no data members
-
-    const struct inmem_t * get_basep() const
-                { return get_t_base_cp<inmem_t, inmem_fifo_socket_t>(this); }
-    struct inmem_t * get_basep()
-                { return get_t_base_p<inmem_t, inmem_fifo_socket_t>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_regular_t {
-    inmem_regular_t() = default;
-
-    inmem_regular_t(const inmem_regular_t & oth) :
-        contents(oth.contents), read_found_nothing(oth.read_found_nothing),
-        always_use_contents(oth.always_use_contents)
-        { }
-
-    inmem_regular_t(inmem_regular_t && oth) :
-        contents(oth.contents), read_found_nothing(oth.read_found_nothing),
-        always_use_contents(oth.always_use_contents)
-        { }
-
-    std::vector<uint8_t> contents { };
-
-    bool read_found_nothing { };
-
-    bool always_use_contents { };  // set when symlink_src_tgt file inserted
-
-    const struct inmem_t * get_basep() const
-                { return get_t_base_cp<inmem_t, inmem_regular_t>(this); }
-    struct inmem_t * get_basep()
-                { return get_t_base_p<inmem_t, inmem_regular_t>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_subdirs_t {
-    // vector of a directory's contents including subdirectories
-    std::vector<inmem_t> sdir_v;
-
-    // Using pointers for parent directories is dangerous due to std::vector
-    // re-allocating when it expands. Backing up 1 level (depth) seems safe,
-    // so when backing up two or more levels, instead use the new path to
-    // navigate down from the root. The following map speeds directory name
-    // lookup for for that latter case.
-    std::map<sstring, size_t> sdir_fn_ind_m;  // sdir filename to index
-
-    void debug(const sstring intro = "") const;
-};
-
-struct inmem_dir_t {
-    inmem_dir_t();   // cannot use designated initializer if given
-
-    inmem_dir_t(const inmem_dir_t & oth) :
-                sdirs_sp(oth.sdirs_sp),
-                par_pt_s(oth.par_pt_s), depth(oth.depth) { }
-    inmem_dir_t(inmem_dir_t && oth) : sdirs_sp(oth.sdirs_sp),
-                                      par_pt_s(oth.par_pt_s),
-                                      depth(oth.depth) { }
-
-    ~inmem_dir_t() { }
-
-    std::shared_ptr<inmem_subdirs_t> sdirs_sp;
-
-    // directory absolute path: par_pt_s + '/' + get_basep()->filename
-    sstring par_pt_s { };
-
-    int depth { -3 };   // purposely invalid. SPATH root has depth=-1
-
-    // these add_to_sdir_v() functions all return the index position in
-    // the sdirs_sp->sdir_v[] vector into which an inmem_t object was
-    // inserted. The inmem_t object is formed from the passed arguments.
-    // The first argument goes into inmem_t::derived which is a
-    // std::variant .
-    size_t add_to_sdir_v(inmem_other_t & n_oth, const sstring & fn,
-                         const short_stat & a_shstat);
-    size_t add_to_sdir_v(inmem_dir_t & n_dir, const sstring & fn,
-                        const short_stat & a_shstat);
-    size_t add_to_sdir_v(inmem_symlink_t & n_sym, const sstring & fn,
-                       const short_stat & a_shstat);
-    size_t add_to_sdir_v(inmem_device_t & n_dev, const sstring & fn,
-                         const short_stat & a_shstat);
-    size_t add_to_sdir_v(inmem_fifo_socket_t & n_fs, const sstring & fn,
-                         const short_stat & a_shstat);
-    size_t add_to_sdir_v(inmem_regular_t & n_reg, const sstring & fn,
-                         const short_stat & a_shstat);
-
-    const struct inmem_t * get_basep() const
-                { return get_t_base_cp<inmem_t, inmem_dir_t>(this); }
-    struct inmem_t * get_basep()
-                { return get_t_base_p<inmem_t, inmem_dir_t>(this); }
-    void debug(const sstring intro = "") const;
-};
-
-
-using inm_var_t=std::variant<inmem_other_t,
-                             inmem_dir_t,
-                             inmem_symlink_t,
-                             inmem_device_t,
-                             inmem_fifo_socket_t,
-                             inmem_regular_t>;
-
-
-struct inmem_t {        // <<< objects of this struct stored in a in-memory
-                        // <<< tree that uses lots of std::vector<inmem_t>
-    inmem_t() = default;
-
-    inmem_t(const inm_var_t & der, const sstring & fn,
-            const short_stat & a_shstat, size_t a_par_dir_ind)
-                : derived(der), filename(fn), shstat(a_shstat),
+    inmem_base_t(const sstring & fn, const short_stat & a_shstat,
+                 size_t a_par_dir_ind)
+                : filename(fn), shstat(a_shstat),
                   par_dir_ind(a_par_dir_ind) { }
 
-    inmem_t(const inmem_t & oth) : derived(oth.derived),
-                                   filename(oth.filename),
-                                   shstat(oth.shstat),
-                                   par_dir_ind(oth.par_dir_ind) { }
-
-    inmem_t(inmem_t && oth) : derived(oth.derived),
-                                   filename(oth.filename),
-                                   shstat(oth.shstat),
-                                   par_dir_ind(oth.par_dir_ind) { }
-
-    // Does the variant holding one of the variants need to be first ?
-    inm_var_t derived;
-
+    // Note that filename is just a filename, it is not a path. All files
+    // and directories have a non-empty filename with one exception: the
+    // clone root (i.e. SPATH itself) has an empty filename.
     sstring filename { };  // link name if symlink
 
     struct short_stat shstat { };
@@ -256,11 +109,183 @@ struct inmem_t {        // <<< objects of this struct stored in a in-memory
     // new nodes we already know the parent's address. We assume the
     // following: when adding a node at depth <d>, no vectors holding
     // lesser depths (i.e. depths [0 ... (<d> - 1)] ) are modified.
+    // Also new vector elements are always added to the end of the vector
+    // so existing indexes remain valid.
     size_t par_dir_ind { };
 
-    void debug(const sstring intro = "") const;
+    void debug_base(const sstring & intro = "") const;
+};
 
-    void debug_base(const sstring intro = "") const;
+// If instances of this class appear in the output then either an unexpected
+// directory element object has been found or there is a logic errror.
+struct inmem_other_t : inmem_base_t {
+    inmem_other_t() = default;  // important for std::variant
+    inmem_other_t(const sstring & filename_, const short_stat & a_shstat)
+                : inmem_base_t(filename_, a_shstat, 0) { }
+
+    // no data members
+
+    sstring get_filename() const { return filename; }
+
+    void debug(const sstring & intro = "") const;
+};
+
+struct inmem_symlink_t : inmem_base_t {
+    inmem_symlink_t() = default;
+    inmem_symlink_t(const sstring & filename_, const short_stat & a_shstat)
+                : inmem_base_t(filename_, a_shstat, 0) { }
+
+    fs::path target;
+
+    // this will be the filename
+    sstring get_filename() const { return filename; }
+
+    void debug(const sstring & intro = "") const;
+};
+
+struct inmem_device_t : inmem_base_t { // block of char
+    inmem_device_t() = default;
+    inmem_device_t(const sstring & filename_, const short_stat & a_shstat)
+                : inmem_base_t(filename_, a_shstat, 0) { }
+
+    bool is_block_dev { false };
+
+    dev_t st_rdev { };
+
+    sstring get_filename() const { return filename; }
+
+    void debug(const sstring & intro = "") const;
+};
+
+struct inmem_fifo_socket_t : inmem_base_t {
+    // no data members (recognized but not cloned)
+
+    sstring get_filename() const { return filename; }
+
+    void debug(const sstring & intro = "") const;
+};
+
+struct inmem_regular_t : inmem_base_t {
+    inmem_regular_t() = default;
+    inmem_regular_t(const sstring & filename_, const short_stat & a_shstat)
+                : inmem_base_t(filename_, a_shstat, 0) { }
+
+    inmem_regular_t(const inmem_regular_t & oth) :
+        inmem_base_t(oth), contents(oth.contents),
+        read_found_nothing(oth.read_found_nothing),
+        always_use_contents(oth.always_use_contents)
+        { }
+
+    inmem_regular_t(inmem_regular_t && oth) :
+        inmem_base_t(oth), contents(oth.contents),
+        read_found_nothing(oth.read_found_nothing),
+        always_use_contents(oth.always_use_contents)
+        { }
+
+    std::vector<uint8_t> contents { };
+
+    bool read_found_nothing { };
+
+    bool always_use_contents { };  // set when symlink_src_tgt file inserted
+
+    sstring get_filename() const { return filename; }
+
+    void debug(const sstring & intro = "") const;
+};
+
+// All members of this variant have default constructors so no need for
+// std::monostate . inmem_other_t objects should be rare.
+using inm_var_t = std::variant<inmem_other_t,
+                               inmem_dir_t,
+                               inmem_symlink_t,
+                               inmem_device_t,
+                               inmem_fifo_socket_t,
+                               inmem_regular_t>;
+
+struct inmem_dir_t : inmem_base_t {
+    inmem_dir_t();   // cannot use designated initializer if given
+
+    inmem_dir_t(const sstring & filename_, const short_stat & a_shstat);
+
+    inmem_dir_t(const inmem_dir_t & oth) :
+                inmem_base_t(oth),
+                sdirs_sp(oth.sdirs_sp),
+                par_pt_s(oth.par_pt_s), depth(oth.depth) { }
+    inmem_dir_t(inmem_dir_t && oth) : inmem_base_t(oth),
+                                      sdirs_sp(oth.sdirs_sp),
+                                      par_pt_s(oth.par_pt_s),
+                                      depth(oth.depth) { }
+
+    ~inmem_dir_t() { }
+
+    // >>> Pivotal member: smart pointer to object holding sub-directories
+    std::shared_ptr<inmem_subdirs_t> sdirs_sp;
+
+    // directory absolute path: par_pt_s + '/' + get_filename()
+    sstring par_pt_s { };
+
+    int depth { -3 };   // purposely invalid. SPATH root has depth=-1
+
+    // these add_to_sdir_v() functions all return the index position in
+    // the sdirs_sp->sdir_v[] vector into which an inmem_t object was
+    // inserted. The inmem_t object is formed from the passed argument.
+    size_t add_to_sdir_v(inmem_other_t & n_oth);
+    size_t add_to_sdir_v(inmem_dir_t & n_dir);
+    size_t add_to_sdir_v(inmem_symlink_t & n_sym);
+    size_t add_to_sdir_v(inmem_device_t & n_dev);
+    size_t add_to_sdir_v(inmem_fifo_socket_t & n_fs);
+    size_t add_to_sdir_v(inmem_regular_t & n_reg);
+
+    sstring get_filename() const { return filename; }
+
+    inm_var_t * get_subd_ivp(size_t index);
+
+    void debug(const sstring & intro = "") const;
+};
+
+// <<< instances of this struct are stored in a in-memory tree that uses lots
+// <<< of std::vector<inmem_t> objects.
+struct inmem_t : inm_var_t {
+    inmem_t() = default;
+
+    inmem_t(const inmem_other_t & i_oth) : inm_var_t(i_oth) { }
+    inmem_t(const inmem_dir_t & i_dir) : inm_var_t(i_dir) { }
+    inmem_t(const inmem_symlink_t & i_symlink) : inm_var_t(i_symlink) { }
+    inmem_t(const inmem_device_t & i_device) : inm_var_t(i_device) { }
+    inmem_t(const inmem_fifo_socket_t & i_fifo_socket)
+                : inm_var_t(i_fifo_socket) { }
+    inmem_t(const inmem_regular_t & i_regular) : inm_var_t(i_regular) { }
+
+    inmem_t(const inmem_t & oth) : inm_var_t(oth) { }
+
+    inmem_t(inmem_t && oth) : inm_var_t(oth) { }
+
+    inmem_base_t * get_basep()
+                { return reinterpret_cast<inmem_base_t *>(this); }
+    const inmem_base_t * get_basep() const
+                { return reinterpret_cast<const inmem_base_t *>(this); }
+
+    sstring get_filename() const;
+
+    void debug(const sstring & intro = "") const;
+};
+
+struct inmem_subdirs_t {
+    inmem_subdirs_t() = default;
+
+    inmem_subdirs_t(size_t vec_init_sz);
+
+    // vector of a directory's contents including subdirectories
+    std::vector<inmem_t> sdir_v;
+
+    // Using pointers for parent directories is dangerous due to std::vector
+    // re-allocating when it expands. Backing up 1 level (depth) seems safe,
+    // so when backing up two or more levels, instead use the new path to
+    // navigate down from the root. The following map speeds directory name
+    // lookup for for that latter case.
+    std::map<sstring, size_t> sdir_fn_ind_m;  // sdir filename to index
+
+    void debug(const sstring & intro = "") const;
 };
 
 enum class inmem_var_e {
@@ -272,27 +297,6 @@ enum class inmem_var_e {
     var_regular,
 };
 
-static const size_t derived_offset = offsetof(inmem_t, derived);
-
-template <typename B, typename Der>
-    const B * get_t_base_cp(const Der * dp) {
-        if constexpr (derived_offset == 0) {
-            return reinterpret_cast<const B * >(dp);
-        } else { const uint8_t * u8p = reinterpret_cast<const uint8_t *>(dp);
-            return reinterpret_cast<const B * >(u8p - derived_offset);
-        }
-    }
-
-template <typename B, typename Der>
-    B * get_t_base_p(Der * dp) {
-        if constexpr (derived_offset == 0) {
-            return reinterpret_cast<B * >(dp);
-        } else {
-            uint8_t * u8p = reinterpret_cast<uint8_t *>(dp);
-            return reinterpret_cast<B * >(u8p - derived_offset);
-        }
-    }
-
 struct stats_t {
     unsigned int num_node;      /* should be all valid file types */
     unsigned int num_dir;       /* directories that are not symlinks */
@@ -302,6 +306,9 @@ struct stats_t {
     unsigned int num_sym2char;
     unsigned int num_sym_other;
     unsigned int num_symlink;
+    unsigned int num_sym_s_eacces;
+    unsigned int num_sym_s_eperm;
+    unsigned int num_sym_s_enoent;
     unsigned int num_sym_s_dangle;
     unsigned int num_oth_fs_skipped;
     unsigned int num_hidden_skipped;
@@ -316,6 +323,7 @@ struct stats_t {
     unsigned int num_derefed;
     unsigned int num_dir_d_success;
     unsigned int num_dir_d_exists;
+    unsigned int num_dir_d_fail;
     unsigned int num_sym_d_success;
     unsigned int num_sym_d_dangle;
     unsigned int num_mknod_d_fail;
@@ -350,7 +358,9 @@ struct mut_opts_t {
     dev_t starting_fs_inst { };
     inmem_dir_t * cache_rt_dirp { };
     struct stats_t stats { };
+    // following two are sorted to enable binary search
     std::vector<sstring> deref_v;
+    std::vector<sstring> exclude_v;    // vector of canonical paths
 };
 
 struct opts_t {
@@ -375,7 +385,6 @@ struct opts_t {
     struct mut_opts_t * mutp;
     fs::path source_pt;         // a directory in canonical form
     fs::path destination_pt;    // (will be) a directory in canonical form
-    std::vector<fs::path> exclude_v;    // vector of canonical paths
     std::shared_ptr<uint8_t[]> reg_buff_sp;
 };
 
@@ -415,7 +424,14 @@ static const int stat_perm_mask { 0x1ff };         /* bottom 9 bits */
 static const int def_file_perm { S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH };
 static const char * symlink_src_tgt { "0_symlink_source_target" };
 
-static auto dir_opt = fs::directory_options::skip_permission_denied;
+static auto dir_opt { fs::directory_options::skip_permission_denied };
+
+static std::error_code clone_work(int dc_depth, const fs::path & src_pt,
+                                  const fs::path & dst_pt,
+                                  const struct opts_t * op);
+static std::error_code cache_src(int dc_depth, inmem_dir_t * odirp,
+                                 const fs::path & src_pt,
+                                 const struct opts_t * op);
 
 /**
  * @param v - sorted vector instance
@@ -430,7 +446,7 @@ template <typename T>
             return -1;
         } else {
             std::size_t index = std::distance(v.begin(), it);
-            return index;
+            return static_cast<int>(index);
         }
     }
 
@@ -529,9 +545,11 @@ inmem_var_str(int var_i)
 }
 
 static void
-pr2ser(const sstring & emsg, const std::error_code & ec = { },
+pr2ser(int vb_ge, const sstring & emsg, const std::error_code & ec = { },
        const std::source_location loc = std::source_location::current())
 {
+    if (vb_ge >= verbose)       // vb_ge==-1 always prints
+        return;
     if (emsg.size() == 0) {     /* shouldn't need location.column() */
         if (verbose > 1)
             scerr << loc.file_name() << " " << loc.function_name() << ";ln="
@@ -554,14 +572,16 @@ pr2ser(const sstring & emsg, const std::error_code & ec = { },
 }
 
 static void
-pr3ser(const sstring & e1msg, const char * e2msg = nullptr,
+pr3ser(int vb_ge, const sstring & e1msg, const char * e2msg = nullptr,
        const std::error_code & ec = { },
        const std::source_location loc = std::source_location::current())
 {
+    if (vb_ge >= verbose)       // vb_ge==-1 always prints
+        return;
     sstring e1 { e1msg.empty() ? "<empty>" : e1msg };
 
     if (e2msg == nullptr)
-        pr2ser(e1, ec, loc);
+        pr2ser(vb_ge, e1, ec, loc);
     else if (ec) {
         if (verbose > 1)
             scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
@@ -580,15 +600,17 @@ pr3ser(const sstring & e1msg, const char * e2msg = nullptr,
 }
 
 static void
-pr4ser(const sstring & e1msg, const sstring & e2msg,
+pr4ser(int vb_ge, const sstring & e1msg, const sstring & e2msg,
        const char * e3msg = nullptr, const std::error_code & ec = { },
        const std::source_location loc = std::source_location::current())
 {
+    if (vb_ge >= verbose)       // vb_ge==-1 always prints
+        return;
     sstring e1 { e1msg.empty() ? "<empty>" : e1msg };
     sstring e2 { e2msg.empty() ? "<empty>" : e2msg };
 
     if (e3msg == nullptr)
-        pr3ser(e1, e2.c_str(), ec, loc);
+        pr3ser(vb_ge, e1, e2.c_str(), ec, loc);
     else if (ec) {
         if (verbose > 1)
             scerr << loc.function_name() << ";ln=" << loc.line() << ": '"
@@ -607,7 +629,25 @@ pr4ser(const sstring & e1msg, const sstring & e2msg,
 }
 
 void
-inmem_subdirs_t::debug(const sstring intro) const
+inmem_base_t::debug_base(const sstring & intro) const
+{
+    if (intro.size() > 0)
+        fprintf(stderr, "%s\n", intro.c_str());
+    fprintf(stderr, "filename: %s\n", filename.c_str());
+    fprintf(stderr, "parent_index: %zu\n", par_dir_ind);
+    fprintf(stderr, "shstat.st_dev: 0x%lx\n", shstat.st_dev);
+    fprintf(stderr, "shstat.st_mode: 0x%x\n", shstat.st_mode);
+    if (verbose > 4)
+        fprintf(stderr, "  this=%p\n", static_cast<const void *>(this));
+}
+
+inmem_subdirs_t:: inmem_subdirs_t(size_t vec_init_sz) :
+                sdir_v(vec_init_sz), sdir_fn_ind_m()
+{
+}
+
+void
+inmem_subdirs_t::debug(const sstring & intro) const
 {
     size_t sdir_v_sz { sdir_v.size() };
     size_t sdir_fn_ind_m_sz { sdir_fn_ind_m.size() };
@@ -625,11 +665,20 @@ inmem_subdirs_t::debug(const sstring intro) const
         fprintf(stderr, "  sdir_v vector:\n");
         for (int k { }; auto && v : sdir_v) {
             fprintf(stderr, "    %d:  %s, filename: %s\n", k,
-                    inmem_var_str(v.derived.index()).c_str(),
-                    v.filename.c_str());
+                    inmem_var_str(v.index()).c_str(),
+                    v.get_basep()->filename.c_str());
             ++k;
         }
     }
+}
+
+void
+inmem_other_t::debug(const sstring & intro) const
+{
+    debug_base(intro);
+    fprintf(stderr, "  other file type\n");
+    if (verbose > 4)
+        fprintf(stderr, "     this: %p\n", (void *) this);
 }
 
 // inmem_dir_t constructor
@@ -637,182 +686,129 @@ inmem_dir_t::inmem_dir_t() : sdirs_sp(std::make_shared<inmem_subdirs_t>())
 {
 }
 
-void
-inmem_dir_t::debug(const sstring intro) const
+inmem_dir_t::inmem_dir_t(const sstring & filename_,
+                         const short_stat & a_shstat)
+                : inmem_base_t(filename_, a_shstat, 0),
+                  sdirs_sp(std::make_shared<inmem_subdirs_t>())
 {
-    const inmem_t * bp { get_basep() };
+}
 
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
+inm_var_t *
+inmem_dir_t::get_subd_ivp(size_t index)
+{
+    return (index < sdirs_sp->sdir_v.size()) ?
+           &sdirs_sp->sdir_v[index] : nullptr;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_other_t & n_oth)
+{
+    if (sdirs_sp) {
+        size_t sz = sdirs_sp->sdir_v.size();
+        sdirs_sp->sdir_v.push_back(n_oth);
+        return sz;
+    }
+    return 0;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_dir_t & n_dir)
+{
+    if (sdirs_sp) {
+        size_t sz { sdirs_sp->sdir_v.size() };
+        const sstring fn { n_dir.filename };
+
+        sdirs_sp->sdir_v.push_back(n_dir);
+        sdirs_sp->sdir_fn_ind_m[fn] = sz; // only for directories
+        return sz;
+    }
+    return 0;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_symlink_t & n_sym)
+{
+    if (sdirs_sp) {
+        size_t sz { sdirs_sp->sdir_v.size() };
+        sdirs_sp->sdir_v.push_back(n_sym);
+        return sz;
+    }
+    return 0;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_device_t & n_dev)
+{
+    if (sdirs_sp) {
+        size_t sz { sdirs_sp->sdir_v.size() };
+        sdirs_sp->sdir_v.push_back(n_dev);
+        return sz;
+    }
+    return 0;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_fifo_socket_t & n_fs)
+{
+    if (sdirs_sp) {
+        size_t sz { sdirs_sp->sdir_v.size() };
+        sdirs_sp->sdir_v.push_back(n_fs);
+        return sz;
+    }
+    return 0;
+}
+
+size_t
+inmem_dir_t::add_to_sdir_v(inmem_regular_t & n_reg)
+{
+    if (sdirs_sp) {
+        size_t sz { sdirs_sp->sdir_v.size() };
+        sdirs_sp->sdir_v.push_back(n_reg);
+        return sz;
+    }
+    return 0;
+}
+
+void
+inmem_dir_t::debug(const sstring & intro) const
+{
+    debug_base(intro);
     fprintf(stderr, "  directory\n");
     fprintf(stderr, "  parent_path: %s\n", par_pt_s.c_str());
     fprintf(stderr, "  depth: %d\n", depth);
-    if (verbose > 0)
+    if (verbose > 4)
         fprintf(stderr, "     this: %p\n", (void *) this);
     if (sdirs_sp)
         sdirs_sp->debug();
 }
 
 void
-inmem_other_t::debug(const sstring intro) const
+inmem_symlink_t::debug(const sstring & intro) const
 {
-    const inmem_t * bp { get_basep() };
-
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
-    fprintf(stderr, "  other file type\n");
-    if (verbose > 0)
-        fprintf(stderr, "     this: %p\n", (void *) this);
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_other_t & n_oth, const sstring & filename,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz = sdirs_sp->sdir_v.size();
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_oth /* std::move(n_oth) */ },
-                          filename, a_shstat, sz } );
-        return sz;
-    }
-    return 0;
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_dir_t & n_dir, const sstring & filename,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz { sdirs_sp->sdir_v.size() };
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_dir /* std::move(n_dir) */ },
-                filename, a_shstat, sz } );
-        sdirs_sp->sdir_fn_ind_m[filename] = sz; // only for directories
-        return sz;
-    }
-    return 0;
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_symlink_t & n_sym, const sstring & filename,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz { sdirs_sp->sdir_v.size() };
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_sym /* std::move(n_sym) */ },
-                          filename, a_shstat, sz } );
-        return sz;
-    }
-    return 0;
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_device_t & n_dev, const sstring & filename,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz { sdirs_sp->sdir_v.size() };
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_dev /* std::move(n_dev) */ },
-                          filename, a_shstat, sz } );
-        return sz;
-    }
-    return 0;
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_fifo_socket_t & n_fs, const sstring & fn,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz { sdirs_sp->sdir_v.size() };
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_fs /* std::move(n_fs) */ },
-                          fn, a_shstat, sz } );
-        return sz;
-    }
-    return 0;
-}
-
-size_t
-inmem_dir_t::add_to_sdir_v(inmem_regular_t & n_reg, const sstring & filename,
-                           const short_stat & a_shstat)
-{
-    if (sdirs_sp) {
-        size_t sz { sdirs_sp->sdir_v.size() };
-        sdirs_sp->sdir_v.push_back(
-                inmem_t { inm_var_t { n_reg /* std::move(n_reg) */ },
-                          filename, a_shstat, sz } );
-        return sz;
-    }
-    return 0;
-}
-
-void
-inmem_symlink_t::debug(const sstring intro) const
-{
-    const inmem_t * bp { get_basep() };
-
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
+    debug_base(intro);
     fprintf(stderr, "  symlink\n");
     fprintf(stderr, "  target: %s\n", target.c_str());
 }
 
 void
-inmem_device_t::debug(const sstring intro) const
+inmem_device_t::debug(const sstring & intro) const
 {
-    const inmem_t * bp { get_basep() };
-
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
+    debug_base(intro);
     fprintf(stderr, "  device type: %s\n", is_block_dev ? "block" : "char");
     fprintf(stderr, "  st_rdev: 0x%lx\n", st_rdev);
 }
 
 void
-inmem_fifo_socket_t::debug(const sstring intro) const
+inmem_fifo_socket_t::debug(const sstring & intro) const
 {
-    const inmem_t * bp { get_basep() };
-
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
+    debug_base(intro);
     fprintf(stderr, "  %s\n", "FIFO or socket");
 }
 
 void
-inmem_regular_t::debug(const sstring intro) const
+inmem_regular_t::debug(const sstring & intro) const
 {
-    const inmem_t * bp { get_basep() };
-
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    if (bp)
-        bp->debug_base();
-    else
-        fprintf(stderr, "No base ptr ??\n");
+    debug_base(intro);
     fprintf(stderr, "  regular file:\n");
     if (read_found_nothing)
         fprintf(stderr, "  read of contents found nothing\n");
@@ -822,26 +818,37 @@ inmem_regular_t::debug(const sstring intro) const
         fprintf(stderr, "  file is %lu bytes long\n", contents.size());
 }
 
-void
-inmem_t::debug(const sstring intro) const
+sstring
+inmem_t::get_filename() const
 {
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    std::visit([]( auto&& arg ){ arg.debug(); }, derived);
+    return std::visit([]( auto&& arg ){ return arg.get_filename(); }, *this);
 }
 
 void
-inmem_t::debug_base(const sstring intro) const
+inmem_t::debug(const sstring & intro) const
 {
-    if (intro.size() > 0)
-        fprintf(stderr, "%s\n", intro.c_str());
-    fprintf(stderr, "variant: %s\n", inmem_var_str(derived.index()).c_str());
-    fprintf(stderr, "filename: %s\n", filename.c_str());
-    fprintf(stderr, "parent_index: %zu\n", par_dir_ind);
-    fprintf(stderr, "shstat.st_dev: 0x%lx\n", shstat.st_dev);
-    fprintf(stderr, "shstat.st_mode: 0x%x\n", shstat.st_mode);
-    if (verbose > 0)
-        fprintf(stderr, "  this=%p\n", static_cast<const void *>(this));
+    std::visit([& intro]( auto&& arg ){ arg.debug(intro); }, *this);
+}
+
+// In returned pair .first is true if pt found in vec, else false and
+// .second is false if rm_if_found is true and vec is empty after erase,
+//  else false.
+static std::pair<bool, bool>
+find_in_sorted_vec(std::vector<sstring> & vec, const sstring & pt,
+                   bool rm_if_found = false)
+{
+    std::pair<bool, bool> res { std::make_pair(false, true) };
+    const auto ind { binary_search_find_index(vec, pt) };
+
+    if (ind >= 0) {
+        res.first = true;
+        if (rm_if_found) {
+            vec.erase(vec.begin() + ind);
+            if (vec.empty())
+                res.second = false;
+        }
+    }
+    return res;
 }
 
 // This assumes both paths are in canonical form. Will still work if
@@ -870,6 +877,36 @@ path_contains_canon(const fs::path & haystack_c_pt,
     if (need_c_sz < hay_c_sz)
         return false;
     return c_need == haystack_c_pt;
+}
+
+static void
+reg_s_err_stats(int err, struct stats_t * q)
+{
+    if (err == EACCES)
+        ++q->num_reg_s_eacces;
+    else if (err == EPERM)
+        ++q->num_reg_s_eperm;
+    else if (err == EIO)
+        ++q->num_reg_s_eio;
+    else if ((err == ENOENT) || (err == ENODEV) || (err == ENXIO))
+        ++q->num_reg_s_enoent_enodev_enxio;
+    else
+        ++q->num_reg_s_e_other;
+}
+
+static void
+reg_d_err_stats(int err, struct stats_t * q)
+{
+    if (err == EACCES)
+        ++q->num_reg_d_eacces;
+    else if (err == EPERM)
+        ++q->num_reg_d_eperm;
+    else if (err == EIO)
+        ++q->num_reg_d_eio;
+    else if ((err == ENOENT) || (err == ENODEV) || (err == ENXIO))
+        ++q->num_reg_d_enoent_enodev_enxio;
+    else
+        ++q->num_reg_d_e_other;
 }
 
 // Splits the parent path (par_pt_s) into a vector of strings containing the
@@ -955,17 +992,7 @@ read_err_wait(int from_fd, uint8_t * bp, int err, const struct opts_t *op)
             }
         }
     }
-    if (err == EACCES)
-        ++q->num_reg_s_eacces;
-    else if (err == EPERM)
-        ++q->num_reg_s_eperm;
-    else if (err == EIO)
-        ++q->num_reg_s_eio;
-    else if ((err == ENOENT) || (err == ENODEV) || (err == ENXIO))
-        ++q->num_reg_s_enoent_enodev_enxio;
-    else
-        ++q->num_reg_s_e_other;
-
+    reg_s_err_stats(err, q);
     return num;
 }
 
@@ -979,61 +1006,32 @@ xfr_vec2file(const std::vector<uint8_t> & v, const sstring & destin_file,
     int num { static_cast<int>(v.size()) };
     int num2;
     mode_t from_perms { st_mode & stat_perm_mask };
-    const uint8_t * bp { &v[0] };   // std::vector is continuous
+   // std::vector element are continuous in memory
+    const uint8_t * bp { (num > 0) ? &v[0] : nullptr };
     const char * destin_nm { destin_file.c_str() };
     struct stats_t * q { &op->mutp->stats };
 
     if (op->destin_all_new) {
         destin_fd = creat(destin_nm, from_perms);
         if (destin_fd < 0) {
-            res = errno;
-            if (res == EACCES)
-                ++q->num_reg_d_eacces;
-            else if (res == EPERM)
-                ++q->num_reg_d_eperm;
-            else if (res == EIO)
-                ++q->num_reg_d_eio;
-            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-                ++q->num_reg_d_enoent_enodev_enxio;
-            else
-                ++q->num_reg_d_e_other;
+            reg_d_err_stats(errno, q);
             goto fini;
         }
     } else {
         destin_fd = open(destin_nm, O_WRONLY | O_CREAT | O_TRUNC, from_perms);
         if (destin_fd < 0) {
-            res = errno;
-            if (res == EACCES)
-                ++q->num_reg_d_eacces;
-            else if (res == EPERM)
-                ++q->num_reg_d_eperm;
-            else if (res == EIO)
-                ++q->num_reg_d_eio;
-            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-                ++q->num_reg_d_enoent_enodev_enxio;
-            else
-                ++q->num_reg_d_e_other;
+            reg_d_err_stats(errno, q);
             goto fini;
         }
     }
-    if (num > 0) {
+    if (bp && (num > 0)) {
         num2 = write(destin_fd, bp, num);
         if (num2 < 0) {
-            res = errno;
-            if (res == EACCES)
-                ++q->num_reg_d_eacces;
-            else if (res == EPERM)
-                ++q->num_reg_d_eperm;
-            else if (res == EIO)
-                ++q->num_reg_d_eio;
-            else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-                ++q->num_reg_d_enoent_enodev_enxio;
-            else
-                ++q->num_reg_d_e_other;
+            reg_d_err_stats(errno, q);
             goto fini;
         }
-        if ((num2 < num) && (verbose > 0))
-            pr3ser(destin_nm, "short write(), strange");
+        if (num2 < num)
+            pr3ser(0, destin_nm, "short write(), strange");
     }
 fini:
     if (destin_fd >= 0)
@@ -1074,31 +1072,15 @@ xfr_reg_file2inmem(const sstring & from_file, inmem_regular_t & ireg,
         res = errno;
         if (res == EACCES) {
             if (stat(from_nm, &from_stat) < 0) {
-                res = errno;
-                if (res == EACCES)
-                    ++q->num_reg_s_eacces;
-                else if (res == EPERM)
-                    ++q->num_reg_s_eperm;
-                else if (res == EIO)
-                    ++q->num_reg_s_eio;
-                else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-                    ++q->num_reg_s_enoent_enodev_enxio;
-                else
-                    ++q->num_reg_s_e_other;
+                reg_s_err_stats(errno, q);
                 goto fini;
             }
             res = 0;
             from_perms = from_stat.st_mode & stat_perm_mask;
             num = 0;
             goto store;
-        } else if (res == EPERM)
-            ++q->num_reg_s_eperm;
-        else if (res == EIO)
-            ++q->num_reg_s_eio;
-        else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-            ++q->num_reg_s_enoent_enodev_enxio;
-        else
-            ++q->num_reg_s_e_other;
+        }
+        reg_s_err_stats(res, q);
         goto fini;
     }
     if (fstat(from_fd, &from_stat) < 0) {
@@ -1113,8 +1095,9 @@ xfr_reg_file2inmem(const sstring & from_file, inmem_regular_t & ireg,
             res = errno;
             num = read_err_wait(from_fd, bp, res, op);
             if (num < 0) {
-                if ((num == -2) && (verbose > 0))
-                    pr3ser(from_file, "<< timed out waiting for this file");
+                if (num == -2)
+                    pr3ser(0, from_file, "<< timed out waiting for this "
+                           "file");
                 num = 0;
                 res = 0;
                 close(from_fd);
@@ -1135,13 +1118,11 @@ store:
         ireg.read_found_nothing = false;
     } else if (num == 0)
         ireg.read_found_nothing = true;
-    ireg.get_basep()->shstat.st_mode = from_perms;
+    ireg.shstat.st_mode = from_perms;
 
 fini:
     if (from_fd >= 0)
         close(from_fd);
-    if (res == 0)
-        ++q->num_reg_success;
     return res;
 }
 
@@ -1150,7 +1131,7 @@ static int
 xfr_reg_inmem2file(const inmem_regular_t & ireg, const sstring & destin_file,
                    const struct opts_t * op)
 {
-    mode_t from_perms { ireg.get_basep()->shstat.st_mode & stat_perm_mask };
+    mode_t from_perms { ireg.shstat.st_mode & stat_perm_mask };
 
     return xfr_vec2file(ireg.contents, destin_file, from_perms, op);
 }
@@ -1161,11 +1142,9 @@ xfr_dev_inmem2file(const inmem_device_t & idev, const sstring & destin_file,
                    const struct opts_t * op)
 {
     int res { };
-    const auto * inmem_p = idev.get_basep();
     struct stats_t * q { &op->mutp->stats };
 
-    if (mknod(destin_file.c_str(), inmem_p->shstat.st_mode,
-              idev.st_rdev) < 0) {
+    if (mknod(destin_file.c_str(), idev.shstat.st_mode, idev.st_rdev) < 0) {
         res = errno;
         if (res == EACCES)
             ++q->num_mknod_d_eacces;
@@ -1190,7 +1169,7 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
     int res { 0 };
     int from_fd { -1 };
     int rd_flags { O_RDONLY };
-    int num;
+    int num { };
     mode_t from_perms;
     uint8_t * bp;
     const char * from_nm { from_file.c_str() };
@@ -1214,31 +1193,14 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
         res = errno;
         if (res == EACCES) {
             if (stat(from_nm, &from_stat) < 0) {
-                res = errno;
-                if (res == EACCES)
-                    ++q->num_reg_s_eacces;
-                else if (res == EPERM)
-                    ++q->num_reg_s_eperm;
-                else if (res == EIO)
-                    ++q->num_reg_s_eio;
-                else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-                    ++q->num_reg_s_enoent_enodev_enxio;
-                else
-                    ++q->num_reg_s_e_other;
+                reg_s_err_stats(errno, q);
                 goto fini;
             }
-            res = 0;
             from_perms = from_stat.st_mode & stat_perm_mask;
             num = 0;
             goto do_destin;
-        } else if (res == EPERM)
-            ++q->num_reg_s_eperm;
-        else if (res == EIO)
-            ++q->num_reg_s_eio;
-        else if ((res == ENOENT) || (res == ENODEV) || (res == ENXIO))
-            ++q->num_reg_s_enoent_enodev_enxio;
-        else
-            ++q->num_reg_s_e_other;
+        }
+        reg_s_err_stats(res, q);
         goto fini;
     }
     if (fstat(from_fd, &from_stat) < 0) {
@@ -1253,10 +1215,10 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
             res = errno;
             num = read_err_wait(from_fd, bp, res, op);
             if (num < 0) {
-                if ((num == -2) && (verbose > 0))
-                    pr3ser(from_file, "<< timed out waiting for this file");
+                if (num == -2)
+                    pr3ser(0, from_file,
+                           "<< timed out waiting for this file");
                 num = 0;
-                res = 0;
                 close(from_fd);
                 goto do_destin;
             }
@@ -1269,13 +1231,17 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
         ++q->num_reg_s_at_reglen;
 do_destin:
     from_fd = -1;
-    res = xfr_vec2file(std::vector<uint8_t>(bp, bp + num), destin_file,
-                       from_perms, op);
+    if (num >= 0) {
+        if (num > 0)
+            res = xfr_vec2file(std::vector<uint8_t>(bp, bp + num),
+                               destin_file, from_perms, op);
+        else
+            res = xfr_vec2file(std::vector<uint8_t>(), destin_file,
+                               from_perms, op);
+    }
 fini:
     if (from_fd >= 0)
         close(from_fd);
-    if (res == 0)
-        ++q->num_reg_success;
     return res;
 }
 
@@ -1299,13 +1265,10 @@ xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
         res = xfr_reg_file2file(src_pt, dst_pt, op);
         if (res) {
             ec.assign(res, std::system_category());
-            if (verbose > 3) {
-                pr4ser(src_pt, dst_pt, "xfr_reg_file2file() "
-                       "failed", ec);
-                ++q->num_error;
-            }
-        } else if (verbose > 5)
-            pr4ser(src_pt, dst_pt, "xfr_reg_file2file() ok");
+            pr4ser(3, src_pt, dst_pt, "xfr_reg_file2file() failed", ec);
+            ++q->num_error;
+        } else
+            pr4ser(5, src_pt, dst_pt, "xfr_reg_file2file() ok");
         break;
     case block:
     case character:
@@ -1314,25 +1277,21 @@ xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
                   src_stat.st_rdev) < 0) {
             res = errno;
             ec.assign(res, std::system_category());
-            if (verbose > 3) {
-                pr4ser(src_pt, dst_pt, "mknod() failed", ec);
-            }
+            pr4ser(3, src_pt, dst_pt, "mknod() failed", ec);
             if (res == EACCES)
                 ++q->num_mknod_d_eacces;
             else if (res == EPERM)
                 ++q->num_mknod_d_eperm;
             else
                 ++q->num_mknod_d_fail;
-        } else if (verbose > 5)
-            pr4ser(src_pt, dst_pt, "mknod() ok");
+        } else
+            pr4ser(5, src_pt, dst_pt, "mknod() ok");
         break;
     case fifo:
-        if (verbose > 0)
-            pr3ser(src_pt, "<< cloning file type: fifo not supported");
+        pr3ser(0, src_pt, "<< cloning file type: fifo not supported");
         break;
     case socket:
-        if (verbose > 0)
-            pr3ser(src_pt, "<< cloning file type: socket not supported");
+        pr3ser(0, src_pt, "<< cloning file type: socket not supported");
         break;              // skip these file types
     default:                // here when something no longer exists
         if (verbose > 3)
@@ -1344,8 +1303,7 @@ xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
 }
 
 static void
-update_stats(const fs::file_type & s_sym_ftype,
-             const fs::file_type & s_ftype, bool hidden,
+update_stats(fs::file_type s_sym_ftype, fs::file_type s_ftype, bool hidden,
              const struct opts_t * op)
 {
     struct stats_t * q { &op->mutp->stats };
@@ -1427,6 +1385,11 @@ show_stats(const struct opts_t * op)
         scout << "Number of symlinks to others: " << q->num_sym_other << "\n";
     if (q->num_symlink > 0)
         scout << "Number of symlinks: " << q->num_symlink << "\n";
+    if ((q->num_sym_s_eacces > 0) || (q->num_sym_s_eperm > 0) ||
+        (q->num_sym_s_enoent > 0))
+        scout << "Number of src symlink EACCES, EPERM, ENOENT errors: "
+              << q->num_sym_s_eacces <<  ", " << q->num_sym_s_eperm << ", "
+              << q->num_sym_s_enoent <<  "\n";
     scout << "Number of source dangling symlinks: " << q->num_sym_s_dangle
           << "\n";
     scout << "Number of hidden files skipped: " << q->num_hidden_skipped
@@ -1448,10 +1411,14 @@ show_stats(const struct opts_t * op)
               << q->num_dir_d_success << "\n";
         scout << "Number of already existing dst directories: "
               << q->num_dir_d_exists << "\n";
+        scout << "Number of dst created directory failures: "
+              << q->num_dir_d_fail << "\n";
         scout << "Number of dst created symlinks: "
               << q->num_sym_d_success << "\n";
-        scout << "Number of dst dangling symlinks: " << q->num_sym_d_dangle
-              << " [may be resolved later in scan]\n";
+        if (op->do_extra > 0)
+            scout << "Number of dst dangling symlinks: "
+                  << q->num_sym_d_dangle
+                  << " [may be resolved later in scan]\n";
         if ((q->num_mknod_d_fail > 0) || (q->num_mknod_d_eacces > 0) ||
             (q->num_mknod_d_eperm > 0)) {
             scout << "Number of dst mknod EACCES failures: "
@@ -1512,35 +1479,234 @@ read_symlink(const fs::path & pt, const struct opts_t * op,
     const auto target_pt = fs::read_symlink(pt, ec);
 
     if (ec) {
-        if (verbose > 2)
-            pr3ser(pt, "read_symlink() failed", ec);
+        pr3ser(2, pt, "read_symlink() failed", ec);
         auto err = ec.value();
         if (err == EACCES)
-            ++q->num_reg_s_eacces;
+            ++q->num_sym_s_eacces;
         else if (err == EPERM)
-            ++q->num_reg_s_eperm;
+            ++q->num_sym_s_eperm;
+        else if (err == ENOENT)
+            ++q->num_sym_s_enoent;
         else
             ++q->num_sym_s_dangle;
     }
-    if (verbose > 5)
-        pr3ser(target_pt, "<< target path returned by read_symlink()", ec);
+    pr3ser(5, target_pt, "<< target path returned by read_symlink()", ec);
     return target_pt;
+}
+
+// Returns true for serious error and sets 'ec': caller should return as well.
+// When it returns false, the call should process as usual (ec may be set).
+static bool
+symlink_clone_work(int dc_depth, const fs::path & pt,
+                   const fs::path & prox_pt, const fs::path & ongoing_d_pt,
+                   bool deref_entry, const struct opts_t * op,
+                   std::error_code & ec)
+{
+    struct stats_t * q { &op->mutp->stats };
+
+    const fs::path target_pt = read_symlink(pt, op, ec);
+    if (ec)
+        return false;
+    fs::path d_lnk_pt { prox_pt / pt.filename() };
+    if (! op->destin_all_new) {     /* may already exist */
+        const auto d_lnk_ftype { fs::symlink_status(d_lnk_pt, ec).type() };
+
+        if (ec) {
+            int v { ec.value() };
+
+            // ENOENT can happen with "dynamic" sysfs
+            if (v == ENOENT) {
+                ++q->num_sym_s_enoent;
+                pr3ser(4, d_lnk_pt, "symlink_status() failed", ec);
+            } else {
+                ++q->num_sym_s_dangle;
+                pr3ser(2, d_lnk_pt, "symlink_status() failed", ec);
+            }
+            return false;
+        }
+        if (d_lnk_ftype == fs::file_type::symlink)
+            return false;
+        else if (d_lnk_ftype == fs::file_type::not_found)
+            ;       // drop through
+        else if (deref_entry && (d_lnk_ftype == fs::file_type::directory))
+            return false;  // skip because destination is already dir
+        else {
+            pr3ser(-1, d_lnk_pt, "unexpected d_lnk_ftype", ec);
+            ++q->num_error;
+            return false;
+        }
+    }
+
+    if (deref_entry) {   /* symlink becomes directory */
+        const fs::path join_pt { pt.parent_path() / target_pt };
+        const fs::path canon_s_sl_targ_pt { fs::canonical(join_pt, ec) };
+        if (ec) {
+            pr3ser(0, canon_s_sl_targ_pt, "canonical() failed", ec);
+            pr3ser(0, pt, "<< symlink probably dangling");
+            ++q->num_sym_s_dangle;
+            return false;
+        }
+        if (! path_contains_canon(op->source_pt, canon_s_sl_targ_pt)) {
+            ++q->num_follow_sym_outside;
+            pr3ser(0, canon_s_sl_targ_pt, "<< outside, fall back to symlink");
+            goto process_as_symlink;
+        }
+        const auto s_targ_ftype { fs::status(canon_s_sl_targ_pt, ec).type() };
+        if (ec) {
+            pr3ser(0, canon_s_sl_targ_pt, "fs::status() failed", ec);
+            ++q->num_error;
+            return false;
+        }
+        if (s_targ_ftype == fs::file_type::directory) {
+            // create dir when src is symlink and follow active
+            // no problem if already exists
+            fs::create_directory(d_lnk_pt, ec);
+            if (ec) {
+                pr3ser(0, d_lnk_pt, "create_directory() failed", ec);
+                ++q->num_dir_d_fail;
+                return false;
+            }
+            const fs::path deep_d_pt { ongoing_d_pt / d_lnk_pt };
+
+            if (op->max_depth_active && (dc_depth >= op->max_depth)) {
+                scerr << "clone_work() hits max_depth: " << canon_s_sl_targ_pt
+                      << " [" << dc_depth << "], don't enter\n";
+                ++q->num_error;
+                ec.assign(ELOOP, std::system_category());
+                return false;
+            }
+            const auto d_sl_tgt { d_lnk_pt / symlink_src_tgt };
+            const auto ctspt { canon_s_sl_targ_pt.string() + "\n" };
+            const char * ccp { ctspt.c_str() };
+            const uint8_t * bp { reinterpret_cast<const uint8_t *>(ccp) };
+            std::vector<uint8_t> v(bp, bp + ctspt.size());
+
+            int res = xfr_vec2file(v, d_sl_tgt, def_file_perm, op);
+            if (res) {
+                ec.assign(res, std::system_category());
+                pr3ser(3, pt, "xfr_vec2file() failed", ec);
+                ++q->num_error;
+            }
+            ++dc_depth;
+            ec = clone_work(dc_depth, canon_s_sl_targ_pt, deep_d_pt, op);
+            --dc_depth;
+            if (ec) {
+                pr3ser(-1, canon_s_sl_targ_pt, "clone_work() failed", ec);
+                return true;
+            }
+        } else {
+            pr3ser(0, canon_s_sl_targ_pt,
+                   "<< for non-dirs, fall back to symlink");
+            goto process_as_symlink;
+        }
+        return false;
+    }               // end of id (deref_entry)
+process_as_symlink:
+    fs::create_symlink(target_pt, d_lnk_pt, ec);
+    if (ec) {
+        pr4ser(0, target_pt, d_lnk_pt, "create_symlink() failed", ec);
+        ++q->num_error;
+    } else {
+        ++q->num_sym_d_success;
+        pr4ser(4, target_pt, d_lnk_pt, "create_symlink() ok");
+        if (op->do_extra > 0) {
+            fs::path abs_target_pt { prox_pt / target_pt };
+            if (fs::exists(abs_target_pt, ec))
+                pr3ser(4, abs_target_pt, "<< symlink target exists");
+            else if (ec) {
+                pr3ser(-1, abs_target_pt, "fs::exists() failed", ec);
+                ++q->num_error;
+            } else
+                ++q->num_sym_d_dangle;
+        }
+    }
+    return false;
+}
+
+static void
+dir_clone_work(int dc_depth, const fs::path & pt,
+               fs::recursive_directory_iterator & itr, dev_t st_dev,
+               fs::perms s_perms, const fs::path & ongoing_d_pt,
+               const struct opts_t * op, std::error_code & ec)
+{
+    struct stats_t * q { &op->mutp->stats };
+
+    if (! op->no_xdev) { // double negative ...
+        if (st_dev != op->mutp->starting_fs_inst) {
+            // do not visit this sub-branch: different fs instance
+            if (verbose > 1)
+                scerr << "Source trying to leave this fs instance at: "
+                      << pt << "\n";
+            itr.disable_recursion_pending();
+            ++q->num_oth_fs_skipped;
+        }
+    }
+    if (op->max_depth_active && (dc_depth >= op->max_depth)) {
+        if (verbose > 2)
+            scerr << "Source at max_depth and this is a directory: "
+                  << pt << ", don't enter\n";
+        itr.disable_recursion_pending();
+    }
+    if (! op->destin_all_new) { /* may already exist */
+        if (fs::exists(ongoing_d_pt, ec)) {
+            if (fs::is_directory(ongoing_d_pt, ec)) {
+                ++q->num_dir_d_exists;
+            } else if (ec) {
+                pr3ser(-1, ongoing_d_pt, ": is_directory() failed", ec);
+                ++q->num_error;
+            } else
+                pr3ser(0, ongoing_d_pt, "exists but not directory, skip");
+            return;
+        } else if (ec) {
+            pr3ser(-1, ongoing_d_pt, "exists() failed", ec);
+            ++q->num_error;
+            return;
+        } else {
+            ;   // drop through to create_dir
+        }
+    }
+    if (fs::create_directory(ongoing_d_pt, pt, ec)) {
+        const fs::perms s_pms = s_perms;
+        if ((s_pms & fs::perms::owner_write) != fs::perms::owner_write) {
+            // if source directory doesn't have owner_write then
+            // make sure destination does.
+            fs::permissions(ongoing_d_pt, fs::perms::owner_write,
+                            fs::perm_options::add, ec);
+            if (ec) {
+                pr3ser(-1, ongoing_d_pt, "couldn't add owner_write perm",
+                       ec);
+                ++q->num_error;
+                return;
+            }
+        }
+        ++q->num_dir_d_success;
+        pr3ser(5, pt, "create_directory() ok");
+    } else {
+        if (ec) {
+            ++q->num_dir_d_fail;
+            pr4ser(1, ongoing_d_pt, pt, "create_directory() failed", ec);
+        } else {
+            ++q->num_dir_d_exists;
+            pr3ser(2, ongoing_d_pt, "exists so create_directory() failed");
+        }
+    }
 }
 
 // Called from do_clone() and if --deref= given may call itself recursively.
 // There are two levels of error reporting, when ecc is set it will cause
-// the a bear immediate return of that value. If this function has been
-// called recursively, the recursive stack will be quickly unwound. The
-// other variety of errors are placed in 'ec' and are reported in the
-// statistics and may cause processing of the currently node to be stopped
-// and processing will continue to the next node.
+// the immediate return of that value. If this function has been called
+// recursively, the recursive stack will be quickly unwound. The other
+// variety of errors are placed in 'ec' and are reported in the statistics
+// and may cause processing of the currently node to be stopped and
+// processing will continue to the next node.
 static std::error_code
 clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
            const struct opts_t * op)
 {
-    bool possible_exclude { ! op->exclude_v.empty() };
-    bool possible_deref { ! op->mutp->deref_v.empty() };
-    struct stats_t * q { &op->mutp->stats };
+    struct mut_opts_t * omutp { op->mutp };
+    bool possible_exclude { ! omutp->exclude_v.empty() };
+    bool possible_deref { ! omutp->deref_v.empty() };
+    struct stats_t * q { &omutp->stats };
     struct stat src_stat;
     std::error_code ecc { };
 
@@ -1585,13 +1751,13 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
         const auto s_ftype { fs::status(src_pt, ecc).type() };
 
         if (ecc) {
-            pr3ser(src_pt, "failed getting file type");
+            pr3ser(-1, src_pt, "failed getting file type", ecc);
             return ecc;
         }
         if (s_ftype != fs::file_type::directory) {
             if (stat(src_pt.c_str(), &src_stat) < 0) {
                 ecc.assign(errno, std::system_category());
-                pr3ser(src_pt, "stat() failed", ecc);
+                pr3ser(-1, src_pt, "stat() failed", ecc);
                 ++q->num_error;
                 return ecc;
             }
@@ -1612,19 +1778,24 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
         // will either be in canonical form, or absolute form if symlink
         std::error_code ec { };
         const fs::path pt { itr->path() };
+        const auto & pt_s { pt.string() };
         const auto depth { itr.depth() };
         bool exclude_entry { false };
         bool deref_entry { false };
         prev_rdi_pt = pt;
 
         ++q->num_node;
-        if (verbose > 6)
-            pr3ser(pt, "about to scan this source entry");
+        pr3ser(6, pt, "about to scan this source entry");
+        const auto itr_status { itr->status(ec) };
+        if (ec) {
+            pr3ser(4, pt, "itr->status() failed, continue", ec);
+            ++q->num_error;
+            continue;
+        }
         const auto s_sym_ftype = itr->symlink_status(ec).type();
         if (ec) {       // serious error
             ++q->num_error;
-            if (verbose > 2)
-                pr3ser(pt, "symlink_status() failed, continue", ec);
+            pr3ser(2, pt, "symlink_status() failed, continue", ec);
             // thought of using entry.refresh(ec) but no speed improvement
             continue;
         }
@@ -1633,18 +1804,13 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
         fs::file_type s_ftype { fs::file_type::none };
 
         if (itr->exists(ec)) {
-            s_ftype = itr->status(ec).type();
-            if (ec) {
-                if (verbose > 4)
-                    pr3ser(pt, "status() failed, continue", ec);
-                ++q->num_error;
-                continue;
-            }
+            s_ftype = itr_status.type();
             // this conditional is a sanity check, may be overkill
             if (op->do_extra > 0) {
                 if ((s_sym_ftype == fs::file_type::symlink) &&
                     (! path_contains_canon(src_pt, pt))) {
-                    pr4ser(src_pt, pt, "is not contained in source path?");
+                    pr4ser(-1, src_pt, pt, "is not contained in source "
+                           "path?");
                     break;
                 }
             }
@@ -1652,44 +1818,32 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
             // expect s_sym_ftype to be symlink, so dangling target
             if (ec) {
                 ++q->num_error;
-                if (verbose > 4)
-                    pr3ser(pt, "itr->exists() failed, continue", ec);
-            } else if (verbose > 1)
-                pr3ser(pt, "<< does not exist, continue");
+                pr3ser(4, pt, "itr->exists() failed, continue", ec);
+            } else
+                pr3ser(1, pt, "<< does not exist, continue");
             continue;
         }
 
-        const bool me_hidden = ((! pt.empty()) &&
-                                (pt.filename().string()[0] == '.'));
+        const bool hidden_entry = ((! pt.empty()) &&
+                                  (pt.filename().string()[0] == '.'));
         if (possible_exclude) {
-            exclude_entry = std::ranges::binary_search(op->exclude_v, pt);
+            std::tie(exclude_entry, possible_exclude) =
+                        find_in_sorted_vec(omutp->exclude_v, pt_s, true);
             if (exclude_entry) {
                 ++q->num_excluded;
-                if (verbose > 3)
-                    pr3ser(pt, "matched for exclusion");
+                pr3ser(3, pt, "matched for exclusion");
             }
         }
         if (possible_deref && (s_sym_ftype == fs::file_type::symlink)) {
-            const auto & pt_s { pt.string() };
-
-            const auto ind = binary_search_find_index(op->mutp->deref_v,
-                                                      pt_s);
-            if (ind >= 0) {
-                deref_entry = true;
-                // make sure this match is not rematched by removing it!
-                // auto it = std::remove(op->mutp->deref_v.begin(),
-                                      // op->mutp->deref_v.end(), pt_s);
-                op->mutp->deref_v.erase(op->mutp->deref_v.begin() + ind);
-                if (op->mutp->deref_v.empty())
-                    possible_deref = false;
+            std::tie(deref_entry, possible_deref) =
+                        find_in_sorted_vec(omutp->deref_v, pt_s, true);
+            if (deref_entry) {
                 ++q->num_derefed;
-                if (verbose > 3)
-                    pr3ser(pt, "matched for dereference");
-                const auto target_pt = read_symlink(pt, op, ec);
+                pr3ser(3, pt, "matched for dereference");
             }
         }
         if (op->want_stats > 0)
-            update_stats(s_sym_ftype, s_ftype, me_hidden, op);
+            update_stats(s_sym_ftype, s_ftype, hidden_entry, op);
         if (op->no_destin) {
             // for --no-dst only collecting stats after excludes and derefs
             if (deref_entry) {
@@ -1700,10 +1854,8 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                 const fs::path canon_s_sl_targ_pt
                                     { fs::canonical(join_pt, ec) };
                 if (ec) {
-                    if (verbose > 0) {
-                        pr3ser(canon_s_sl_targ_pt, "canonical() failed", ec);
-                        pr3ser(pt, "<< symlink probably dangling");
-                    }
+                    pr3ser(0, canon_s_sl_targ_pt, "canonical() failed", ec);
+                    pr3ser(0, pt, "<< symlink probably dangling");
                     ++q->num_sym_s_dangle;
                     continue;
                 }
@@ -1712,7 +1864,7 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                                  op);
                 --dc_depth;
                 if (ecc) {
-                    pr3ser(canon_s_sl_targ_pt, "clone_work() failed",
+                    pr3ser(-1, canon_s_sl_targ_pt, "clone_work() failed",
                            ecc);
                     ++q->num_error;
                     return ecc;  // propagate error
@@ -1728,275 +1880,58 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
             }
             continue;
         }
-        if ((! op->clone_hidden) && me_hidden) {
+        if ((! op->clone_hidden) && hidden_entry) {
             ++q->num_hidden_skipped;
+            if (s_sym_ftype == fs::file_type::directory)
+                itr.disable_recursion_pending();
             continue;
         }
         if ((s_ftype != fs::file_type::none) &&
             (stat(pt.c_str(), &src_stat) < 0)) {
             ec.assign(errno, std::system_category());
-            pr3ser(pt, "stat() failed", ec);
+            pr3ser(-1, pt, "stat() failed", ec);
             ++q->num_error;
             continue;
         }
         fs::path rel_pt { fs::proximate(pt, src_pt, ec) };
         if (ec) {
-            if (verbose > 1)
-                pr3ser(pt, "proximate() failed", ec);
+            pr3ser(1, pt, "proximate() failed", ec);
             ++q->num_error;
             continue;
         }
-        fs::path ongoing_destin_pt { dst_pt / rel_pt };
-        if (verbose > 2)
+        fs::path ongoing_d_pt { dst_pt / rel_pt };
+        if (verbose > 4)
              fprintf(stderr, "%s: pt: %s, rel_path: %s, ongoing_d_pt: %s\n",
                      __func__, pt.c_str(), rel_pt.c_str(),
-                     ongoing_destin_pt.c_str());
+                     ongoing_d_pt.c_str());
 
         switch (s_sym_ftype) {
         using enum fs::file_type;
 
         case directory:
-            if (! op->no_xdev) { // double negative ...
-                if (src_stat.st_dev != op->mutp->starting_fs_inst) {
-                    // do not visit this sub-branch: different fs instance
-                    if (verbose > 1)
-                        scerr << "Source trying to leave this fs instance "
-                                 "at: " << pt << "\n";
-                    itr.disable_recursion_pending();
-                    ++q->num_oth_fs_skipped;
-                }
-            }
             if (exclude_entry) {
                 itr.disable_recursion_pending();
                 continue;
             }
-            if (op->max_depth_active && (depth >= op->max_depth)) {
-                if (verbose > 2)
-                    scerr << "Source at max_depth and this is a directory: "
-                          << pt << ", don't enter\n";
-                itr.disable_recursion_pending();
-            }
-            if (! op->destin_all_new) { /* may already exist */
-                if (fs::exists(ongoing_destin_pt, ec)) {
-                    if (fs::is_directory(ongoing_destin_pt, ec)) {
-                        ++q->num_dir_d_exists;
-                    } else if (ec) {
-                        pr3ser(ongoing_destin_pt, ":is_directory() failed",
-                               ec);
-                        ++q->num_error;
-                    } else if (verbose > 0)
-                        pr3ser(ongoing_destin_pt, "exists but not directory, "
-                               "skip");
-                    break;
-                } else if (ec) {
-                    pr3ser(ongoing_destin_pt, "exists() failed", ec);
-                    ++q->num_error;
-                    break;
-                } else {
-                    ;   // drop through to create_dir
-                }
-            }
-            if (! fs::create_directory(ongoing_destin_pt, pt, ec)) {
-                if (ec) {
-                    ++q->num_error;
-                    if (verbose > 1)
-                        pr4ser(ongoing_destin_pt, pt, "create_directory() "
-                               "failed", ec);
-                } else {
-                    ++q->num_dir_d_exists;
-                    if (verbose > 2)
-                        pr3ser(ongoing_destin_pt, "exists so "
-                               "create_directory() failed");
-                }
-                break;
-            } else {
-                const fs::perms s_pms = itr->status(ec).permissions();
-                if (ec) {
-                    ++q->num_error;
-                    if (verbose > 1)
-                        pr4ser(ongoing_destin_pt, pt, "itr->status() failed",
-                               ec);
-                    break;
-                }
-                if ((s_pms & fs::perms::owner_write) !=
-                    fs::perms::owner_write) {
-                    // if source directory doesn't have owner_write then
-                    // make sure destination does.
-                    fs::permissions(ongoing_destin_pt, fs::perms::owner_write,
-                                    fs::perm_options::add, ec);
-                    if (ec) {
-                        pr3ser(ongoing_destin_pt, "couldn't add owner_write "
-                               "perm", ec);
-                        ++q->num_error;
-                        break;
-                    }
-                }
-                ++q->num_dir_d_success;
-                if (verbose > 5)
-                    pr3ser(pt, "create_directory() ok");
-            }
+            dir_clone_work(dc_depth, pt, itr, src_stat.st_dev,
+                           itr_status.permissions(), ongoing_d_pt, op, ec);
             break;
         case symlink:
             {
-                const fs::path target_pt = read_symlink(pt, op, ec);
-                if (ec)
-                    break;
                 const fs::path pt_parent_pt { pt.parent_path() };
                 fs::path prox_pt { dst_pt };
                 if (pt_parent_pt != src_pt) {
                     prox_pt /= fs::proximate(pt_parent_pt, src_pt, ec);
                     if (ec) {
-                        pr3ser(pt_parent_pt, "symlink: proximate() failed",
-                               ec);
+                        pr3ser(-1, pt_parent_pt, "symlink: proximate() "
+                               "failed", ec);
                         ++q->num_error;
                         break;
                     }
                 }
-                fs::path d_lnk_pt { prox_pt / pt.filename() };
-                if (! op->destin_all_new) {     /* may already exist */
-                    const fs::file_type d_lnk_ftype =
-                                fs::symlink_status(d_lnk_pt, ec).type();
-
-                    if (ec) {
-                        int v { ec.value() };
-
-                        // ENOENT can happen with "dynamic" sysfs
-                        if ((v == ENOENT) || (v == ENODEV) || (v == ENXIO)) {
-                            ++q->num_reg_s_enoent_enodev_enxio;
-                            if (verbose > 4)
-                                pr3ser(d_lnk_pt, "symlink_status() failed",
-                                       ec);
-                        } else {
-                            ++q->num_error;
-                            if (verbose > 2)
-                                pr3ser(d_lnk_pt, "symlink_status() failed",
-                                       ec);
-                        }
-                        break;
-                    }
-                    if (d_lnk_ftype == fs::file_type::symlink)
-                        break;
-                    else if (d_lnk_ftype == fs::file_type::not_found)
-                        ;       // drop through
-                    else if (deref_entry &&
-                             (d_lnk_ftype == fs::file_type::directory))
-                        break;  // skip because destination is already dir
-                    else {
-                        pr3ser(d_lnk_pt, "unexpected d_lnk_ftype", ec);
-                        ++q->num_error;
-                        break;
-                    }
-                }
-
-                if (deref_entry) {   /* symlink becomes directory */
-                    const fs::path join_pt { pt.parent_path() / target_pt };
-                    const fs::path canon_s_sl_targ_pt
-                                        { fs::canonical(join_pt, ec) };
-                    if (ec) {
-                        if (verbose > 0) {
-                            pr3ser(canon_s_sl_targ_pt, "canonical() failed",
-                                   ec);
-                            pr3ser(pt, "<< symlink probably dangling");
-                        }
-                        ++q->num_sym_s_dangle;
-                        break;
-                    }
-                    if (! path_contains_canon(op->source_pt,
-                                              canon_s_sl_targ_pt)) {
-                        ++q->num_follow_sym_outside;
-                        if (verbose > 0)
-                            pr3ser(canon_s_sl_targ_pt,
-                                   "<< outside, fall back to symlink");
-                        goto back_to_symlink;
-                    }
-                    const auto s_targ_ftype
-                                { fs::status(canon_s_sl_targ_pt, ec).type() };
-                    if (ec) {
-                        if (verbose > 0)
-                            pr3ser(canon_s_sl_targ_pt, "fs::status() failed",
-                                   ec);
-                        ++q->num_error;
-                        break;
-                    }
-                    if (s_targ_ftype == fs::file_type::directory) {
-                        // create dir when src is symlink and follow active
-                        // no problem if already exists
-                        fs::create_directory(d_lnk_pt, ec);
-                        if (ec) {
-                            if (verbose > 0)
-                                pr3ser(d_lnk_pt, "create_directory() failed",
-                                       ec);
-                            ++q->num_error;
-                            break;
-                        }
-                        const fs::path deep_d_pt
-                                { ongoing_destin_pt / d_lnk_pt };
-
-                        // N.B. recursive call!
-                        if (op->max_depth_active &&
-                            (dc_depth >= op->max_depth)) {
-                            scerr << "clone_work() hits max_depth: "
-                                  << canon_s_sl_targ_pt << " [" << dc_depth
-                                  << "], don't enter\n";
-                            ++q->num_error;
-                            ecc.assign(ELOOP, std::system_category());
-                            return ecc;  // propagate
-                        }
-                        const auto d_sl_tgt { d_lnk_pt / symlink_src_tgt };
-                        const auto ctspt
-                                { canon_s_sl_targ_pt.string() + "\n" };
-                        const char * ccp { ctspt.c_str() };
-                        const uint8_t * bp
-                                { reinterpret_cast<const uint8_t *>(ccp) };
-                        std::vector<uint8_t> v(bp, bp + ctspt.size());
-
-                        int res = xfr_vec2file(v, d_sl_tgt, def_file_perm, op);
-                        if (res) {
-                            ec.assign(res, std::system_category());
-                            if (verbose > 3) {
-                                pr3ser(pt, "xfr_vec2file() failed", ec);
-                                ++q->num_error;
-                            }
-                        }
-                        ++dc_depth;
-                        ecc = clone_work(dc_depth, canon_s_sl_targ_pt,
-                                         deep_d_pt, op);
-                        --dc_depth;
-                        if (ecc) {
-                            pr3ser(canon_s_sl_targ_pt, "clone_work() failed",
-                                   ecc);
-                            ++q->num_error;
-                            return ecc;  // propagate error
-                        }
-                    } else {
-                        if (verbose > 0)
-                            pr3ser(canon_s_sl_targ_pt,
-                                   "<< for non-dirs, fall back to symlink");
-                        goto back_to_symlink;
-                    }
-                    break;
-                }               // end of id (deref_entry)
-back_to_symlink:
-                fs::create_symlink(target_pt, d_lnk_pt, ec);
-                if (ec) {
-                    if (verbose > 0)
-                        pr4ser(target_pt, d_lnk_pt, "create_symlink() failed",
-                               ec);
-                    ++q->num_error;
-                } else {
-                    ++q->num_sym_d_success;
-                    if (verbose > 4)
-                        pr4ser(target_pt, d_lnk_pt, "create_symlink() ok");
-                    fs::path abs_target_pt { prox_pt / target_pt };
-                    if (fs::exists(abs_target_pt, ec)) {
-                        if (verbose > 4)
-                            pr3ser(abs_target_pt, "<< symlink target exists");
-                    } else if (ec) {
-                        pr3ser(abs_target_pt, "fs::exists() failed", ec);
-                        ++q->num_error;
-                    } else
-                        ++q->num_sym_d_dangle;
-                }
+                if (symlink_clone_work(dc_depth, pt, prox_pt, ongoing_d_pt,
+                                       deref_entry, op, ec))
+                    return ec;
             }
             break;
         case regular:
@@ -2007,8 +1942,7 @@ back_to_symlink:
         case unknown:
             if (exclude_entry)
                 continue;
-            ec = xfr_other_ft(s_sym_ftype, pt, src_stat, ongoing_destin_pt,
-                              op);
+            ec = xfr_other_ft(s_sym_ftype, pt, src_stat, ongoing_d_pt, op);
             ec.clear();
             break;
         default:                // here when something no longer exists
@@ -2024,12 +1958,10 @@ back_to_symlink:
                 }
                 break;
             case symlink:
-                if (verbose > 2)
-                    pr4ser(pt, "switch in switch symlink, skip");
+                pr4ser(2, pt, "switch in switch symlink, skip");
                 break;
             case regular:
-                if (verbose > 2)
-                    pr4ser(pt, "switch in switch regular file, skip");
+                pr4ser(2, pt, "switch in switch regular file, skip");
                 break;
             default:
                 if (verbose > 2)
@@ -2043,32 +1975,103 @@ back_to_symlink:
     }                   // end of recursive_directory scan for loop
     if (ecc) {
         ++q->num_scan_failed;
-        pr3ser(prev_rdi_pt,
+        pr3ser(-1, prev_rdi_pt,
                "<< previous, recursive_directory_iterator() failed", ecc);
     }
     return ecc;
+}
+
+// Returns true for serious error and sets 'ec': caller should return as well.
+// When it returns false, the call should process as usual (ec may be set).
+static bool
+symlink_cache_work(int dc_depth, const fs::path & pt,
+                   const short_stat & a_shstat, inmem_dir_t * & l_odirp,
+                   inmem_dir_t * prev_odirp, bool deref_entry,
+                   const struct opts_t * op, std::error_code & ec)
+{
+    struct stats_t * q { &op->mutp->stats };
+    const auto filename = pt.filename();
+    const auto par_pt = pt.parent_path();
+
+    const auto target_pt = read_symlink(pt, op, ec);
+    if (ec)
+        return false;
+    inmem_symlink_t a_sym(filename, a_shstat);
+    a_sym.target = target_pt;
+    if (deref_entry) {   /* symlink becomes directory */
+        const fs::path canon_s_targ_pt
+                        { fs::canonical(par_pt / target_pt, ec) };
+        if (ec) {
+            pr3ser(0, canon_s_targ_pt, "canonical() failed", ec);
+            pr3ser(0, pt, "<< symlink probably dangling");
+            ++q->num_sym_s_dangle;
+            return false;
+        }
+        if (! path_contains_canon(op->source_pt, canon_s_targ_pt)) {
+            ++q->num_follow_sym_outside;
+            pr3ser(0, canon_s_targ_pt, "<< outside, fall back to symlink");
+            goto process_as_symlink;
+        }
+        const auto s_targ_ftype { fs::status(canon_s_targ_pt, ec).type() };
+        if (ec) {
+            pr3ser(0, canon_s_targ_pt, "fs::status() failed", ec);
+            ++q->num_error;
+            return false;
+        }
+        if (s_targ_ftype == fs::file_type::directory) {
+            prev_odirp = l_odirp;
+            inmem_dir_t a_dir(filename, a_shstat);
+            a_dir.par_pt_s = par_pt.string();
+            a_dir.depth = dc_depth;
+            auto ind = l_odirp->add_to_sdir_v(a_dir);
+            l_odirp = std::get_if<inmem_dir_t> (l_odirp->get_subd_ivp(ind));
+            if (l_odirp) {
+                const auto ctspt { canon_s_targ_pt.string() + "\n" };
+                const char * ccp { ctspt.c_str() };
+                const uint8_t * bp { reinterpret_cast<const uint8_t *>(ccp) };
+                std::vector<uint8_t> v(bp, bp + ctspt.size());
+                short_stat b_shstat { a_shstat };
+                b_shstat.st_mode &= ~stat_perm_mask;
+                b_shstat.st_mode |= def_file_perm;
+                inmem_regular_t a_reg(symlink_src_tgt, b_shstat);
+
+                a_reg.contents.swap(v);
+                a_reg.always_use_contents = true;
+                l_odirp->add_to_sdir_v(a_reg);
+                ++dc_depth;
+                ec = cache_src(dc_depth, l_odirp, canon_s_targ_pt, op);
+                --dc_depth;
+                if (ec)
+                    return true;
+            }
+            l_odirp = prev_odirp;
+        }
+        return false;
+    }
+process_as_symlink:
+    l_odirp->add_to_sdir_v(a_sym);
+    return false;
 }
 
 static std::error_code
 cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
           const struct opts_t * op)
 {
-    const bool possible_exclude
-                { (dc_depth == 0) && (! op->exclude_v.empty()) };
-    bool possible_deref { (dc_depth == 0) && (! op->mutp->deref_v.empty()) };
-    int depth { dc_depth };
+    struct mut_opts_t * omutp { op->mutp };
+    bool possible_exclude
+                { (dc_depth == 0) && (! omutp->exclude_v.empty()) };
+    bool possible_deref { (dc_depth == 0) && (! omutp->deref_v.empty()) };
+    int depth;
     int prev_depth { dc_depth - 1 };    // assume descendind into directory
     int prev_dir_ind { -1 };
-    struct stats_t * q { &op->mutp->stats };
     inmem_dir_t * l_odirp { odirp };
     inmem_dir_t * prev_odirp { };
+    struct stats_t * q { &omutp->stats };
     std::error_code ecc { };
-    fs::path pt;
-    fs::path par_pt;
     short_stat a_shstat;
 
     if (l_odirp == nullptr) {
-        pr2ser("odirp is null ?");
+        pr2ser(-1, "odirp is null ?");
         ecc.assign(EINVAL, std::system_category());
         return ecc;
     }
@@ -2100,19 +2103,19 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
         std::error_code ec { };
         // since src_pt is in canonical form, assume entry.path()
         // will either be in canonical form, or absolute form if symlink
-        pt = itr->path();
+        const auto & pt = itr->path();
+        const auto & pt_s { pt.string() };
         prev_rdi_pt = pt;
         const sstring filename { pt.filename() };
-        par_pt = pt.parent_path();
+        const auto par_pt = pt.parent_path();
         depth = itr.depth();
         bool exclude_entry { false };
         bool deref_entry { false };
 
-        fs::file_type s_sym_ftype { itr->symlink_status(ec).type() };
+        const auto s_sym_ftype { itr->symlink_status(ec).type() };
         if (ec) {       // serious error
             ++q->num_error;
-            if (verbose > 2)
-                pr3ser(pt, "symlink_status() failed, continue", ec);
+            pr3ser(2, pt, "symlink_status() failed, continue", ec);
             // thought of using entry.refresh(ec) but no speed improvement
             continue;
         }
@@ -2122,9 +2125,13 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
                 prev_odirp = l_odirp;
             else
                 prev_odirp = nullptr;
-            if (prev_dir_ind >= 0)
+            if (prev_dir_ind >= 0) {
                 l_odirp = std::get_if<inmem_dir_t>(
-                        &l_odirp->sdirs_sp->sdir_v[prev_dir_ind].derived);
+                        &l_odirp->sdirs_sp->sdir_v[prev_dir_ind]);
+            } else {
+                pr3ser(5, l_odirp->filename,
+                       "<< probably source root (if blank)");
+            }
         } else if (depth < prev_depth) {   // should never occur on first iter
             if (depth == (prev_depth - 1) && prev_odirp) {
                 l_odirp = prev_odirp;   // short cut if backing up one
@@ -2135,11 +2142,11 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
                 const std::vector<sstring> vs
                         { split_path(par_pt, src_pt, op, ec) };
                 if (ec) {
-                    pr3ser(par_pt, "split_path() failed", ec);
+                    pr3ser(-1, par_pt, "split_path() failed", ec);
                     break;
                 }
                 // when depth reduces > 1, don't trust pointers any more
-                // l_odirp = op->mutp->cache_rt_dirp;
+                // l_odirp = omutp->cache_rt_dirp;
                 l_odirp = odirp;
                 const auto it_end { l_odirp->sdirs_sp->sdir_fn_ind_m.end() };
 
@@ -2148,16 +2155,16 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
                         { l_odirp->sdirs_sp->sdir_fn_ind_m.find(s) };
 
                     if (it == it_end) {
-                        pr4ser(par_pt, s, "unable to find that sub-path");
+                        pr4ser(-1, par_pt, s, "unable to find that sub-path");
                         cont_recurse = true;
                         l_odirp = prev_odirp;
                         break;
                     }
                     inmem_t * childp
                         { &l_odirp->sdirs_sp->sdir_v[it->second] };
-                    l_odirp = std::get_if<inmem_dir_t>(&childp->derived);
+                    l_odirp = std::get_if<inmem_dir_t>(childp);
                     if (l_odirp == nullptr) {
-                        pr4ser(par_pt, s,
+                        pr4ser(-1, par_pt, s,
                                "unable to find that sub-directory");
                         cont_recurse = true;
                         l_odirp = prev_odirp;
@@ -2175,8 +2182,7 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
         ++q->num_node;
         // if (q->num_node >= 240000)
             // break;
-        if (verbose > 6)
-            pr3ser(pt, "about to scan this source entry");
+        pr3ser(6, pt, "about to scan this source entry");
         if (depth > q->max_depth)
             q->max_depth = depth;
 
@@ -2184,42 +2190,39 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
 
         if (lstat(pt.c_str(), &a_stat) < 0) {
             ec.assign(errno, std::system_category());
-            pr3ser(src_pt, "lstat() failed", ec);
+            pr3ser(-1, src_pt, "lstat() failed", ec);
             ++q->num_error;
             continue;
         }
         a_shstat.st_dev = a_stat.st_dev;
         a_shstat.st_mode = a_stat.st_mode;
         // memcpy(&a_inm.shstat, &a_stat, short_stat_cp_sz);
-        fs::file_type s_ftype { itr->status(ec).type() };
+        const auto s_ftype { itr->status(ec).type() };
+        if (ec) {
+            ++q->num_error;
+            pr3ser(2, pt, "itr->status() failed, continue", ec);
+            continue;
+        }
 
-        const bool me_hidden { ((! pt.empty()) && (filename[0] == '.')) };
+        const bool hidden_entry { ((! pt.empty()) && (filename[0] == '.')) };
         if (possible_exclude) {
-            exclude_entry = std::ranges::binary_search(op->exclude_v, pt);
-            if (exclude_entry)
+            std::tie(exclude_entry, possible_exclude) =
+                        find_in_sorted_vec(omutp->exclude_v, pt_s, true);
+            if (exclude_entry) {
                 ++q->num_excluded;
-            if (exclude_entry && (verbose > 3))
-                pr3ser(pt, "matched for exclusion");
+                pr3ser(3, pt, "matched for exclusion");
+            }
         }
         if (possible_deref && (s_sym_ftype == fs::file_type::symlink)) {
-            const auto & pt_s { pt.string() };
-            auto ind = binary_search_find_index(op->mutp->deref_v, pt_s);
-
-            if (ind >= 0) {
-                deref_entry = true;
-                // make sure this match is not rematched by removing it!
-                // auto it = std::remove(op->mutp->deref_v.begin(),
-                                      // op->mutp->deref_v.end(), pt_s);
-                op->mutp->deref_v.erase(op->mutp->deref_v.begin() + ind);
-                if (op->mutp->deref_v.empty())
-                    possible_deref = false;
+            std::tie(deref_entry, possible_deref) =
+                        find_in_sorted_vec(omutp->deref_v, pt_s, true);
+            if (deref_entry) {
                 ++q->num_derefed;
-                if (verbose > 3)
-                    pr3ser(pt, "matched for dereference");
+                pr3ser(3, pt, "matched for dereference");
             }
         }
         if (op->want_stats > 0)
-            update_stats(s_sym_ftype, s_ftype, me_hidden, op);
+            update_stats(s_sym_ftype, s_ftype, hidden_entry, op);
         if (l_isdir) {
             if (exclude_entry) {
                 itr.disable_recursion_pending();
@@ -2233,7 +2236,7 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
                 continue;
             }
             if (! op->no_xdev) { // double negative ...
-                if (a_stat.st_dev != op->mutp->starting_fs_inst) {
+                if (a_stat.st_dev != omutp->starting_fs_inst) {
                     // do not visit this sub-branch: different fs instance
                     if (verbose > 1)
                         scerr << "Source trying to leave this fs instance "
@@ -2246,7 +2249,7 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
         } else if (exclude_entry)
             continue;
 
-        if ((! op->clone_hidden) && me_hidden) {
+        if ((! op->clone_hidden) && hidden_entry) {
             ++q->num_hidden_skipped;
             if (s_sym_ftype == fs::file_type::directory)
                 itr.disable_recursion_pending();
@@ -2257,151 +2260,70 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
         using enum fs::file_type;
 
         case symlink:
-            {
-                inmem_symlink_t a_sym;
-
-                const auto target_pt = read_symlink(pt, op, ec);
-                if (ec)
-                    break;
-                a_sym.target = target_pt;
-                if (deref_entry) {   /* symlink becomes directory */
-                    const fs::path join_pt { pt.parent_path() / target_pt };
-                    const fs::path canon_s_targ_pt
-                                        { fs::canonical(join_pt, ec) };
-                    if (ec) {
-                        if (verbose > 0) {
-                            pr3ser(canon_s_targ_pt, "canonical() failed", ec);
-                            pr3ser(pt, "<< symlink probably dangling");
-                        }
-                        ++q->num_sym_s_dangle;
-                        break;
-                    }
-                    if (! path_contains_canon(op->source_pt,
-                                              canon_s_targ_pt)) {
-                        ++q->num_follow_sym_outside;
-                        if (verbose > 0)
-                            pr3ser(canon_s_targ_pt,
-                                   "<< outside, fall back to symlink");
-                        goto back_to_symlink;
-                    }
-                    const auto s_targ_ftype
-                                { fs::status(canon_s_targ_pt, ec).type() };
-                    if (ec) {
-                        if (verbose > 0)
-                            pr3ser(canon_s_targ_pt, "fs::status() failed",
-                                   ec);
-                        ++q->num_error;
-                        break;
-                    }
-                    if (s_targ_ftype == fs::file_type::directory) {
-                        prev_odirp = l_odirp;
-                        inmem_dir_t a_dir;
-                        a_dir.par_pt_s = par_pt.string();
-                        a_dir.depth = depth;
-                        auto ind = l_odirp->add_to_sdir_v(a_dir, filename,
-                                                          a_shstat);
-                        l_odirp = std::get_if<inmem_dir_t>(
-                                    &l_odirp->sdirs_sp->sdir_v
-                                            [ind].derived);
-                        if (l_odirp) {
-                            const auto ctspt
-                                    { canon_s_targ_pt.string() + "\n" };
-                            const char * ccp { ctspt.c_str() };
-                            const uint8_t * bp
-                               { reinterpret_cast<const uint8_t *>(ccp) };
-                            std::vector<uint8_t> v(bp, bp + ctspt.size());
-                            inmem_regular_t a_reg;
-
-                            a_reg.contents.swap(v);
-                            a_reg.always_use_contents = true;
-                            short_stat b_shstat { a_shstat };
-                            b_shstat.st_mode &= ~stat_perm_mask;
-                            b_shstat.st_mode |= def_file_perm;
-                            l_odirp->add_to_sdir_v(a_reg, symlink_src_tgt,
-                                                   b_shstat);
-                            ++depth;
-                            ecc = cache_src(depth, l_odirp,
-                                            canon_s_targ_pt, op);
-                            --depth;
-                            if (ecc)
-                                return ecc;
-                        }
-                        l_odirp = prev_odirp;
-                    }
-                    break;
-                }
-back_to_symlink:
-                l_odirp->add_to_sdir_v(a_sym, filename, a_shstat);
-            }
+            if (symlink_cache_work(dc_depth, pt, a_shstat, l_odirp,
+                                   prev_odirp, deref_entry, op, ec))
+                return ec;
             break;
         case directory:
             {
-                inmem_dir_t a_dir;
+                inmem_dir_t a_dir(filename, a_shstat);
                 a_dir.par_pt_s = par_pt.string();
                 a_dir.depth = depth;
-                prev_dir_ind = l_odirp->add_to_sdir_v(a_dir, filename,
-                                                      a_shstat);
+                prev_dir_ind = l_odirp->add_to_sdir_v(a_dir);
             }
             break;
         case block:
             {
-                inmem_device_t a_dev;
+                inmem_device_t a_dev(filename, a_shstat);
                 a_dev.is_block_dev = true;
                 a_dev.st_rdev = a_stat.st_rdev;
-                l_odirp->add_to_sdir_v(a_dev, filename, a_shstat);
+                l_odirp->add_to_sdir_v(a_dev);
             }
             break;
         case character:
             {
-                inmem_device_t a_dev;
+                inmem_device_t a_dev(filename, a_shstat);
                 // a_dev.is_block_dev = false;
                 a_dev.st_rdev = a_stat.st_rdev;
-                l_odirp->add_to_sdir_v(a_dev, filename, a_shstat);
+                l_odirp->add_to_sdir_v(a_dev);
             }
             break;
         case fifo:
-            if (verbose > 0)
-                pr3ser(pt, "<< cloning file type: socket not supported");
+            pr3ser(0, pt, "<< cloning file type: socket not supported");
             break;              // skip this file type
         case socket:
-            if (verbose > 0)
-                pr3ser(pt, "<< cloning file type: socket not supported");
+            pr3ser(0, pt, "<< cloning file type: socket not supported");
             break;              // skip this file type
         case regular:
             {
-                inmem_regular_t a_reg;
-                size_t ind { l_odirp->add_to_sdir_v(a_reg, filename,
-                                                    a_shstat) };
+                inmem_regular_t a_reg(filename, a_shstat);
+                size_t ind { l_odirp->add_to_sdir_v(a_reg) };
                 if (op->cache_op_num > 1) {
                     auto iregp { std::get_if<inmem_regular_t>
-                                (&l_odirp->sdirs_sp->sdir_v[ind].derived) };
+                                        (l_odirp->get_subd_ivp(ind)) };
 
                     if (iregp) {
                         if (int res { xfr_reg_file2inmem(pt, *iregp, op) }) {
                             ec.assign(res, std::system_category());
-                            if (verbose > 3) {
-                                pr3ser(pt, "xfr_reg_file2inmem() "
-                                       "failed", ec);
-                                ++q->num_error;
-                            }
-                        } else if (verbose > 5)
-                            pr3ser(pt, "xfr_reg_file2inmem() ok");
+                            pr3ser(3, pt, "xfr_reg_file2inmem() failed", ec);
+                            ++q->num_error;
+                        } else
+                            pr3ser(5, pt, "xfr_reg_file2inmem() ok");
                     }
                 }
             }
             break;
         default:
             {
-                inmem_regular_t a_oth;
-                l_odirp->add_to_sdir_v(a_oth, filename, a_shstat);
+                inmem_other_t a_oth(filename, a_shstat);
+                l_odirp->add_to_sdir_v(a_oth);
             }
             break;
         }
-
     }
     if (ecc) {
         ++q->num_scan_failed;
-        pr3ser(prev_rdi_pt,
+        pr3ser(-1, prev_rdi_pt,
                "<< previous, recursive_directory_iterator() failed", ecc);
     }
     return ecc;
@@ -2419,7 +2341,7 @@ count_cache(const inmem_dir_t * odirp, bool recurse, const struct opts_t * op)
         return sz;
     }
     for (k = 0; const auto & sub : odirp->sdirs_sp->sdir_v) {
-        const auto * cdirp { std::get_if<inmem_dir_t>(&sub.derived) };
+        const auto * cdirp { std::get_if<inmem_dir_t>(&sub) };
 
         ++k;
         if (cdirp)
@@ -2445,7 +2367,7 @@ depth_count_cache(const inmem_dir_t * odirp, std::vector<size_t> & ra,
     else
         ra[d] += sz;
     for (const auto & sub : odirp->sdirs_sp->sdir_v) {
-        if (const auto * cdirp { std::get_if<inmem_dir_t>(&sub.derived) }) {
+        if (const auto * cdirp { std::get_if<inmem_dir_t>(&sub) }) {
             depth_count_cache(cdirp, ra, cdirp->depth);
         }
     }
@@ -2479,7 +2401,7 @@ depth_count_src(const fs::path & src_pt, std::vector<size_t> & ra)
         }
     }
     if (ecc)
-        pr3ser(prev_pt,
+        pr3ser(-1, prev_pt,
                "<< previous path before depth_count_src() failed", ecc);
 }
 
@@ -2487,24 +2409,27 @@ static void
 show_cache_not_dir(const inmem_t & a_nod,
                    [[maybe_unused]] const struct opts_t * op)
 {
-    if (std::get_if<inmem_other_t>(&a_nod.derived)) {
-        scerr << "  other filename: " << a_nod.filename << "\n";
+    if (const auto * cothp { std::get_if<inmem_other_t>(&a_nod) }) {
+        scerr << "  other filename: " << cothp->filename << "\n";
     } else if (const auto * csymp {
-               std::get_if<inmem_symlink_t>(&a_nod.derived) }) {
-        scerr << "  symlink link name: " << a_nod.filename
+               std::get_if<inmem_symlink_t>(&a_nod) }) {
+        scerr << "  symlink link name: " << csymp->filename
               << "  target filename: " << csymp->target.string() << "\n";
-    } else if (std::get_if<inmem_regular_t>(&a_nod.derived)) {
+    } else if (const auto * cregp { std::get_if<inmem_regular_t>(&a_nod) }) {
         if (verbose > 4)
             fprintf(stderr, "%s: &a_nod=%p\n", __func__, (void *)&a_nod);
-        scerr << "  regular filename: " << a_nod.filename << "\n";
+        scerr << "  regular filename: " << cregp->filename << "\n";
     } else if (const auto * cdevp {
-               std::get_if<inmem_device_t>(&a_nod.derived) }) {
+               std::get_if<inmem_device_t>(&a_nod) }) {
         if (cdevp->is_block_dev)
-            scerr << "  block device filename: " << a_nod.filename << "\n";
+            scerr << "  block device filename: " << cdevp->filename << "\n";
         else
-            scerr << "  char device filename: " << a_nod.filename << "\n";
+            scerr << "  char device filename: " << cdevp->filename << "\n";
+    } else if (const auto * cfsp {
+               std::get_if<inmem_fifo_socket_t>(&a_nod) }) {
+        scerr << "  fifo/socket filename: " << cfsp->filename << "\n";
     } else
-        scerr << "  unknown filename: " << a_nod.filename << "\n";
+        scerr << "  unknown type\n";
     if (verbose > 3)
         fprintf(stderr, "    &inmem_t: %p\n", (void *)&a_nod);
 }
@@ -2512,19 +2437,19 @@ show_cache_not_dir(const inmem_t & a_nod,
 static void
 show_cache(const inmem_t & a_nod, bool recurse, const struct opts_t * op)
 {
-    const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod.derived) };
+    const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod) };
 
     if (dirp == nullptr) {
         show_cache_not_dir(a_nod, op);
         return;
     }
     scerr << "  directory: " << dirp->par_pt_s << '/'
-          << a_nod.filename << ", depth=" << dirp->depth << "\n";
+          << dirp->filename << ", depth=" << dirp->depth << "\n";
     if (verbose > 3)
         fprintf(stderr, "    &inmem_t: %p\n", (void *)&a_nod);
 
     for (const auto & subd : dirp->sdirs_sp->sdir_v) {
-        const auto * cdirp { std::get_if<inmem_dir_t>(&subd.derived) };
+        const auto * cdirp { std::get_if<inmem_dir_t>(&subd) };
 
         if (recurse) {
             if (cdirp)
@@ -2558,24 +2483,39 @@ unroll_cache_not_dir(const sstring & s_pt_s, const sstring & d_pt_s,
     std::error_code ec { };
     struct stats_t * q { &op->mutp->stats };
 
-    if (std::get_if<inmem_other_t>(&a_nod.derived)) {
-        scerr << "  other filename: " << a_nod.filename << "\n";
+    if (const auto * cothp { std::get_if<inmem_other_t>(&a_nod) }) {
+        scerr << "  other filename: " << cothp->filename << "\n";
     } else if (const auto * csymp {
-               std::get_if<inmem_symlink_t>(&a_nod.derived) }) {
+               std::get_if<inmem_symlink_t>(&a_nod) }) {
         fs::create_symlink(csymp->target, d_pt_s, ec);
         if (ec) {
-            if (verbose > 1)
-                pr4ser(csymp->target, d_pt_s, "[targ, link] "
-                       "create_symlink() failed", ec);
+            pr4ser(1, csymp->target, d_pt_s, "[targ, link] "
+                   "create_symlink() failed", ec);
             ++q->num_error;
         } else {
             ++q->num_sym_d_success;
-            if (verbose > 4)
-                pr4ser(csymp->target, d_pt_s, "[targ, link] "
-                       "create_symlink() ok");
+            pr4ser(5, csymp->target, d_pt_s, "[targ, link] "
+                   "create_symlink() ok");
+            if (op->do_extra > 0) {
+                fs::path par_pt { fs::path(d_pt_s).parent_path() };
+                fs::path abs_targ_pt =
+                        fs::weakly_canonical(par_pt / csymp->target, ec);
+                if (ec)
+                    pr3ser(2, par_pt / csymp->target,
+                           "<< weakly_canonical() failed", ec);
+                else {
+                    if (fs::exists(abs_targ_pt, ec))
+                        pr3ser(5, abs_targ_pt, "<< symlink target exists");
+                    else if (ec) {
+                        pr3ser(0, abs_targ_pt, "fs::exists() failed", ec);
+                        ++q->num_error;
+                    } else
+                        ++q->num_sym_d_dangle;
+                }
+            }
         }
     } else if (const auto * cdevp
-               { std::get_if<inmem_device_t>(&a_nod.derived) }) {
+               { std::get_if<inmem_device_t>(&a_nod) }) {
         res = xfr_dev_inmem2file(*cdevp, d_pt_s, op);
         if (res)
             ec.assign(res, std::system_category());
@@ -2583,7 +2523,7 @@ unroll_cache_not_dir(const sstring & s_pt_s, const sstring & d_pt_s,
             fprintf(stderr, "%s: failed to write dev file: %s, "
                     "res=%d\n", __func__, d_pt_s.c_str(), res);
     } else if (const auto * cregp
-                 { std::get_if<inmem_regular_t>(&a_nod.derived) } ) {
+                 { std::get_if<inmem_regular_t>(&a_nod) } ) {
         if (cregp->always_use_contents || (op->cache_op_num > 1))
             res = xfr_reg_inmem2file(*cregp, d_pt_s, op);
         else if (op->cache_op_num == 1)
@@ -2593,8 +2533,11 @@ unroll_cache_not_dir(const sstring & s_pt_s, const sstring & d_pt_s,
         if (res && (verbose > 4))
             fprintf(stderr, "%s: failed to write dst regular file: %s, "
                     "res=%d\n", __func__, d_pt_s.c_str(), res);
+    } else if (const auto * cfsp
+                 { std::get_if<inmem_fifo_socket_t>(&a_nod) }) {
+        scerr << "  fifo/socket filename: " << cfsp->filename << "\n";
     } else
-        scerr << "  unknown filename: " << a_nod.filename << "\n";
+        scerr << "  unknown type\n";
     if (verbose > 3)
         fprintf(stderr, "    &inmem_t: %p\n", (void *)&a_nod);
     return ec;
@@ -2610,15 +2553,13 @@ unroll_cache_is_dir(const sstring & dst_pt_s, const inmem_dir_t * dirp,
     // just go with user's default permissions for this directory
     if (! fs::create_directory(dst_pt_s, ec)) {
         if (ec) {
-            ++q->num_error;
-            if (verbose > 1)
-                pr4ser(dst_pt_s, std::to_string(dirp->depth),
-                       "create_directory() failed", ec);
+            ++q->num_dir_d_fail;
+            pr4ser(1, dst_pt_s, std::to_string(dirp->depth),
+                   "create_directory() failed", ec);
         } else if (dst_pt_s != op->destination_pt) {
             ++q->num_dir_d_exists;
-            if (verbose > 2)
-                pr4ser(dst_pt_s, std::to_string(dirp->depth),
-                       "[dir, depth] exists so create_directory() ignored");
+            pr4ser(2, dst_pt_s, std::to_string(dirp->depth),
+                   "[dir, depth] exists so create_directory() ignored");
         }
     } else
         ++q->num_dir_d_success;
@@ -2632,11 +2573,11 @@ unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
 {
     std::error_code ec { };
 
-    sstring src_dir_pt_s { s_par_pt_s + '/' + a_nod.filename };
-    if (a_nod.filename.empty())
+    sstring src_dir_pt_s { s_par_pt_s + '/' + a_nod.get_filename() };
+    if (a_nod.get_filename().empty())
         src_dir_pt_s = s_par_pt_s;      // don't want trailing slash
     sstring dst_dir_pt_s { tranform_src_pt2dst(src_dir_pt_s, op) };
-    const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod.derived) };
+    const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod) };
 
     if (dirp == nullptr)
         return unroll_cache_not_dir(src_dir_pt_s, dst_dir_pt_s, a_nod, op);
@@ -2646,14 +2587,14 @@ unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
         return ec;
 
     for (const auto & subd : dirp->sdirs_sp->sdir_v) {
-        const auto * cdirp { std::get_if<inmem_dir_t>(&subd.derived) };
+        const auto * cdirp { std::get_if<inmem_dir_t>(&subd) };
 
         if (cdirp && recurse) {
             ec = unroll_cache(subd, src_dir_pt_s, recurse, op);
             if (ec)
                 break;
         } else {
-            const auto & fn {subd.filename };
+            const auto & fn {subd.get_filename() };
             sstring s_d_pt_s { src_dir_pt_s + '/' + fn };
             sstring d_d_pt_s { dst_dir_pt_s + '/' + fn };
 
@@ -2682,7 +2623,7 @@ do_clone(const struct opts_t * op)
     op->mutp->starting_fs_inst = root_stat.st_dev;
     ec = clone_work(0, op->source_pt, op->destination_pt, op);
     if (ec)
-        pr3ser(op->source_pt, "<< src; problem with clone_work()", ec);
+        pr3ser(-1, op->source_pt, "<< src; problem with clone_work()", ec);
 
     if (op->do_extra) {
         std::vector<size_t> ra;
@@ -2720,15 +2661,19 @@ do_cache(inmem_t & src_rt_cache, const struct opts_t * op)
         return ec;
     }
     op->mutp->starting_fs_inst = root_stat.st_dev;
-    src_rt_cache.shstat.st_dev = root_stat.st_dev;
-    src_rt_cache.shstat.st_mode = root_stat.st_mode;
+    auto * rt_dirp { std::get_if<inmem_dir_t>(&src_rt_cache) };
+    if (rt_dirp == nullptr) {
+        ec.assign(ENOMEM, std::system_category());
+        return ec;
+    }
+    rt_dirp->shstat.st_dev = root_stat.st_dev;
+    rt_dirp->shstat.st_mode = root_stat.st_mode;
 
     uint8_t * sbrk_p { static_cast<uint8_t *>(sbrk(0)) };
-    auto * rt_dirp { std::get_if<inmem_dir_t>(&src_rt_cache.derived) };
     op->mutp->cache_rt_dirp = rt_dirp;    // mutable to hold root directory ptr
     ec = cache_src(0, rt_dirp, op->source_pt, op);
     if (ec)
-        pr3ser(op->source_pt, "<< src; problem with cache_src()", ec);
+        pr3ser(-1, op->source_pt, "<< src; problem with cache_src()", ec);
 
     auto end { chron::steady_clock::now() };
     auto ms
@@ -2742,11 +2687,8 @@ do_cache(inmem_t & src_rt_cache, const struct opts_t * op)
 
     if (! op->no_destin) {
         ec = unroll_cache(src_rt_cache, op->source_pt.string(), true, op);
-        if (ec) {
-            if (verbose > 0)
-                pr2ser("unroll_cache() failed", ec);
-            ec.clear();
-        }
+        if (ec)
+            pr2ser(0, "unroll_cache() failed", ec);
     }
 
     if (op->do_extra) {
@@ -2845,7 +2787,7 @@ main(int argc, char * argv[])
             break;
         case 'm':
             if (1 != sscanf(optarg, "%d", &op->max_depth)) {
-                pr2ser("unable to decode integer for --max-depth=MAXD");
+                pr2ser(-1, "unable to decode integer for --max-depth=MAXD");
                 return 1;
             }
             if (op->max_depth > 0) {
@@ -2858,7 +2800,7 @@ main(int argc, char * argv[])
             break;
         case 'r':
             if (1 != sscanf(optarg, "%u", &op->reglen)) {
-                pr2ser("unable to decode integer for --reglen=RLEN");
+                pr2ser(-1, "unable to decode integer for --reglen=RLEN");
                 return 1;
             }
             break;
@@ -2881,7 +2823,7 @@ main(int argc, char * argv[])
             return 0;
         case 'w':
             if (1 != sscanf(optarg, "%u", &op->wait_ms)) {
-                pr2ser("unable to decode integer for --reglen=RLEN");
+                pr2ser(-1, "unable to decode integer for --reglen=RLEN");
                 return 1;
             }
             op->wait_given = true;
@@ -2910,14 +2852,14 @@ main(int argc, char * argv[])
         if (fs::exists(pt, ec) && fs::is_directory(pt, ec)) {
             op->source_pt = fs::canonical(pt, ec);
             if (ec) {
-                pr3ser(pt, "canonical() failed", ec);
+                pr3ser(-1, pt, "canonical() failed", ec);
                 return 1;
             }
         } else if (ec) {
-            pr3ser(pt, "exists() or is_directory() failed", ec);
+            pr3ser(-1, pt, "exists() or is_directory() failed", ec);
         } else {
-            pr3ser(source_clone_start, "doesn't exist, is not a directory, "
-                   "or ...", ec);
+            pr3ser(-1, source_clone_start, "doesn't exist, is not a "
+                   "directory, or ...", ec);
             return 1;
         }
     } else
@@ -2930,13 +2872,13 @@ main(int argc, char * argv[])
         if (op->destination_given)
             d_str = destination_clone_start;
         else if (op->source_given) {
-            pr2ser("When --source= given, need also to give "
+            pr2ser(-1, "When --source= given, need also to give "
                    "--destination= (or --no-dst)");
             return 1;
         } else
             d_str = def_destin_root;
         if (d_str.size() == 0) {
-            pr2ser("Confused, what is destination? [Got empty string]");
+            pr2ser(-1, "Confused, what is destination? [Got empty string]");
             return 1;
         }
         fs::path d_pt { d_str };
@@ -2947,11 +2889,11 @@ main(int argc, char * argv[])
             if (fs::is_directory(d_pt, ec)) {
                 op->destination_pt = fs::canonical(d_pt, ec);
                 if (ec) {
-                    pr3ser(d_pt, "canonical() failed", ec);
+                    pr3ser(-1, d_pt, "canonical() failed", ec);
                     return 1;
                 }
             } else {
-                pr3ser(d_pt, "is not a directory", ec);
+                pr3ser(-1, d_pt, "is not a directory", ec);
                 return 1;
             }
         } else {
@@ -2962,17 +2904,17 @@ main(int argc, char * argv[])
                 // no problem if already exists
                 fs::create_directory(d_pt, ec);
                 if (ec) {
-                    pr3ser(d_pt, "create_directory() failed", ec);
+                    pr3ser(-1, d_pt, "create_directory() failed", ec);
                     return 1;
                 }
                 op->destination_pt = fs::canonical(d_pt, ec);
                 op->destin_all_new = true;
                 if (ec) {
-                    pr3ser(d_pt, "canonical() failed", ec);
+                    pr3ser(-1, d_pt, "canonical() failed", ec);
                     return 1;
                 }
             } else {
-                pr3ser(d_p_pt, "needs to be an existing directory", ec);
+                pr3ser(-1, d_p_pt, "needs to be an existing directory", ec);
                 return 1;
             }
         }
@@ -2981,15 +2923,15 @@ main(int argc, char * argv[])
                     op->source_pt.string().c_str(),
                     op->destination_pt.string().c_str());
         if (op->source_pt == op->destination_pt) {
-            pr4ser(op->source_pt, op->destination_pt,
+            pr4ser(-1, op->source_pt, op->destination_pt,
                    "source and destination seem to be the same. That is not "
                    "practical");
             return 1;
         }
     } else {
         if (op->destination_given) {
-            pr2ser("the --destination= and the --no-dst options contradict, "
-                   "please pick one");
+            pr2ser(-1, "the --destination= and the --no-dst options "
+                   "contradict, please pick one");
             return 1;
         }
         if (! op->mutp->deref_v.empty())
@@ -3006,7 +2948,7 @@ main(int argc, char * argv[])
         }
     }
 
-    auto ex_sz = op->exclude_v.size();  // will be zero here
+    auto ex_sz = op->mutp->exclude_v.size();  // will be zero here
     bool destin_excluded = false;
 
     if (ex_glob_seen) {
@@ -3019,43 +2961,41 @@ main(int argc, char * argv[])
             if (! is_absol) {       // then make absolute
                 auto cur_pt { fs::current_path(ec) };
                 if (ec) {
-                    pr3ser(ex_pt, "unable to get current path, ignored", ec);
+                    pr3ser(-1, ex_pt, "unable to get current path, ignored",
+                           ec);
                     continue;
                 }
                 ex_pt = cur_pt / ex_pt;
             }
             fs::path c_ex_pt { fs::canonical(ex_pt, ec) };
-            if (ec) {
-                if (verbose > 1)
-                    pr3ser(ex_pt, "exclude path rejected", ec);
-            } else {
+            if (ec)
+                pr3ser(1, ex_pt, "exclude path rejected", ec);
+            else {
                 if (path_contains_canon(op->source_pt, c_ex_pt)) {
-                    op->exclude_v.push_back(ex_pt); // N.B. non-canonical
-                    if (verbose > 5)
-                        pr3ser(ex_pt, "accepted canonical exclude path");
+                    op->mutp->exclude_v.push_back(ex_pt.string());
+                    pr3ser(5, ex_pt, "accepted canonical exclude path");
                     if (c_ex_pt == op->destination_pt)
                         destin_excluded = true;
-                } else if ((! first_reported) || (verbose > 0)) {
-                    pr3ser(ex_pt,
+                } else if (! first_reported) {
+                    pr3ser(0, ex_pt,
                            "ignored as not contained in exclude source");
                     first_reported = true;
                 }
             }
         }
         globfree(&ex_paths);
-        ex_sz = op->exclude_v.size();
+        ex_sz = op->mutp->exclude_v.size();
 
-        if (verbose > 0)
+        if (verbose > 1)
             scerr << "--exclude= argument matched " << ex_sz << " files\n";
         if (ex_sz > 1) {
-            if (! std::ranges::is_sorted(op->exclude_v)) {
-                if (verbose > 2)
-                    pr2ser("need to sort exclude vector");
-                std::ranges::sort(op->exclude_v);
+            if (! std::ranges::is_sorted(op->mutp->exclude_v)) {
+                pr2ser(2, "need to sort exclude vector");
+                std::ranges::sort(op->mutp->exclude_v);
             }
-            const auto ret { std::ranges::unique(op->exclude_v) };
-            op->exclude_v.erase(ret.begin(), ret.end());
-            ex_sz = op->exclude_v.size();       // could be less after erase
+            const auto ret { std::ranges::unique(op->mutp->exclude_v) };
+            op->mutp->exclude_v.erase(ret.begin(), ret.end());
+            ex_sz = op->mutp->exclude_v.size();  // could be less after erase
             if (verbose > 0)
                 scerr << "exclude vector size after sort then unique="
                       << ex_sz << "\n";
@@ -3063,22 +3003,21 @@ main(int argc, char * argv[])
     }
     if (! op->no_destin) {
         if (path_contains_canon(op->source_pt, op->destination_pt)) {
-            pr2ser("Source contains destination, infinite recursion "
+            pr2ser(-1, "Source contains destination, infinite recursion "
                    "possible");
             if ((op->max_depth == 0) && (ex_sz == 0)) {
-                pr2ser("exit, due to no --max-depth= and no --exclude=");
+                pr2ser(-1, "exit, due to no --max-depth= and no --exclude=");
                 return 1;
             } else if (! destin_excluded)
-                pr2ser("Probably best to --exclude= destination, will "
+                pr2ser(-1, "Probably best to --exclude= destination, will "
                        "continue");
         } else {
             if (verbose > 0)
-                pr2ser("Source does NOT contain destination (good)");
+                pr2ser(-1, "Source does NOT contain destination (good)");
             if (path_contains_canon(op->destination_pt, op->source_pt)) {
-                pr2ser("Strange: destination contains source, is infinite "
-                       "recursion possible ?");
-                if (verbose > 2)
-                    pr2ser("destination does NOT contain source (also good)");
+                pr2ser(-1, "Strange: destination contains source, is "
+                       "infinite recursion possible ?");
+                pr2ser(2, "destination does NOT contain source (also good)");
             }
         }
         if (! op->mutp->deref_v.empty()) {
@@ -3091,7 +3030,8 @@ main(int argc, char * argv[])
                 if (! is_absol) {       // then make absolute
                     auto cur_pt { fs::current_path(ec) };
                     if (ec) {
-                        pr3ser(sl, "unable to get current path, ignored", ec);
+                        pr3ser(-1, sl, "unable to get current path, ignored",
+                               ec);
                         sl = rm_marker;    // unlikely name to remove later
                         continue;
                     }
@@ -3106,22 +3046,21 @@ main(int argc, char * argv[])
                     const auto ftyp { fs::symlink_status(npath, ec).type() };
 
                     if (ec) {
-                        pr3ser(npath, "unable to 'stat' that file, ignored",
-                               ec);
+                        pr3ser(-1, npath, "unable to 'stat' that file, "
+                               "ignored", ec);
                         sl = rm_marker;
                         continue;
                     } else if (ftyp != fs::file_type::symlink) {
-                        pr3ser(npath, "is not a symlink, ignored", ec);
+                        pr3ser(-1, npath, "is not a symlink, ignored", ec);
                         sl = rm_marker;
                         continue;
                     } else {
                         sl = npath.string();
-                        if (verbose > 5)
-                            pr3ser(npath,
-                                   "is a candidate symlink, will deep copy");
+                        pr3ser(5, npath,
+                               "is a candidate symlink, will deep copy");
                     }
                 } else {
-                    pr3ser(npath, "expected to be under SPATH");
+                    pr3ser(-1, npath, "expected to be under SPATH");
                     sl = rm_marker;
                     continue;
                 }
@@ -3142,12 +3081,11 @@ main(int argc, char * argv[])
     }
 
     if (op->cache_op_num > 0) {
-        inmem_dir_t s_inm_rt;
+        inmem_dir_t s_inm_rt("", short_stat());
         s_inm_rt.par_pt_s = op->source_pt;
         s_inm_rt.depth = -1;
-        inm_var_t iv_obj { s_inm_rt };
         // only SPATH root has empty filename (2nd argument in following)
-        inmem_t src_rt_cache(iv_obj, "", short_stat(), 0);
+        inmem_t src_rt_cache(s_inm_rt);
 
         if (verbose > 4) {
             src_rt_cache.debug("empty cache tree");
@@ -3165,7 +3103,7 @@ main(int argc, char * argv[])
         ec = do_clone(op);      // Single pass
         if (ec) {
             res = 1;
-            pr2ser("do_clone() failed");
+            pr2ser(-1, "do_clone() failed");
         }
     }
     if ((op->want_stats == 0) && (op->destination_given == false) &&
@@ -3174,7 +3112,7 @@ main(int argc, char * argv[])
               << def_destin_root << "\n";
 
     if ((! op->want_stats) && (q->num_scan_failed > 0)) {
-        pr2ser("Warning: scan of source truncated, may need to re-run");
+        pr2ser(-1, "Warning: scan of source truncated, may need to re-run");
         res = 1;
     }
     return res;
