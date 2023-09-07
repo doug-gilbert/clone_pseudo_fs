@@ -14,8 +14,8 @@ to PFS. The plural of both will have "_s" appended.
 
 The problem
 -----------
-But rsync already does clone/copy you may say. Various "features" of PFS_s
-may trip up find/tar/rsync . Here are a few:
+But rsync already does clone/copy you may say? Various "features" of PFS_s
+may trip up find, tar or rsync . Here are a few:
 
     - while most PFS_s are generally speaking "read-only", possibly apart
       from a small number of writable attribute files. Files including
@@ -23,8 +23,8 @@ may trip up find/tar/rsync . Here are a few:
       limitation only applies to the user space! Rather than storing
       information for later retrieval, PFS_s tend to be an interface between
       some aspect of the OS (e.g. some of its drivers) and the user space.
-      An intermittent cable to a USB hub can cause USB devices to appear
-      and disappear in quick succession. And due to the device enumeration
+      An intermittent cable to a USB hub can cause USB devices to disappear
+      and re-appear in quick succession. And due to the device enumeration
       policy in Linux, those devices may re-appear with a slightly different
       name. The software to do a recursive directory scan of such a dynamic
       PFS needs to be robust. This includes only failing when the iteration
@@ -114,4 +114,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-7th August 2023
+7th September 2023 [rev: 13]

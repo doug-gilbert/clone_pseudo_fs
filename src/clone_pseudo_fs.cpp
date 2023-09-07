@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.95 20230815 [svn: r12]";
+static const char * const version_str = "0.90 20230907 [svn: r13]";
 
 #include <iostream>
 #include <fstream>
@@ -91,7 +91,7 @@ struct inmem_base_t {
     inmem_base_t() = default;
 
     inmem_base_t(const sstring & fn, const short_stat & a_shstat,
-                 size_t a_par_dir_ind)
+                 size_t a_par_dir_ind) noexcept
                 : filename(fn), shstat(a_shstat),
                   par_dir_ind(a_par_dir_ind) { }
 
@@ -113,7 +113,7 @@ struct inmem_base_t {
     // so existing indexes remain valid.
     size_t par_dir_ind { };
 
-    void debug_base(const sstring & intro = "") const;
+    void debug_base(const sstring & intro = "") const noexcept;
 };
 
 // If instances of this class appear in the output then either an unexpected
@@ -121,32 +121,32 @@ struct inmem_base_t {
 struct inmem_other_t : inmem_base_t {
     inmem_other_t() = default;  // important for std::variant
     inmem_other_t(const sstring & filename_, const short_stat & a_shstat)
-                : inmem_base_t(filename_, a_shstat, 0) { }
+                noexcept : inmem_base_t(filename_, a_shstat, 0) { }
 
     // no data members
 
-    sstring get_filename() const { return filename; }
+    sstring get_filename() const noexcept { return filename; }
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 struct inmem_symlink_t : inmem_base_t {
     inmem_symlink_t() = default;
     inmem_symlink_t(const sstring & filename_, const short_stat & a_shstat)
-                : inmem_base_t(filename_, a_shstat, 0) { }
+                noexcept : inmem_base_t(filename_, a_shstat, 0) { }
 
     fs::path target;
 
     // this will be the filename
-    sstring get_filename() const { return filename; }
+    sstring get_filename() const noexcept { return filename; }
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 struct inmem_device_t : inmem_base_t { // block of char
     inmem_device_t() = default;
     inmem_device_t(const sstring & filename_, const short_stat & a_shstat)
-                : inmem_base_t(filename_, a_shstat, 0) { }
+                noexcept : inmem_base_t(filename_, a_shstat, 0) { }
 
     bool is_block_dev { false };
 
@@ -154,29 +154,29 @@ struct inmem_device_t : inmem_base_t { // block of char
 
     sstring get_filename() const { return filename; }
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 struct inmem_fifo_socket_t : inmem_base_t {
     // no data members (recognized but not cloned)
 
-    sstring get_filename() const { return filename; }
+    sstring get_filename() const noexcept { return filename; }
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 struct inmem_regular_t : inmem_base_t {
     inmem_regular_t() = default;
     inmem_regular_t(const sstring & filename_, const short_stat & a_shstat)
-                : inmem_base_t(filename_, a_shstat, 0) { }
+                noexcept : inmem_base_t(filename_, a_shstat, 0) { }
 
-    inmem_regular_t(const inmem_regular_t & oth) :
+    inmem_regular_t(const inmem_regular_t & oth) noexcept :
         inmem_base_t(oth), contents(oth.contents),
         read_found_nothing(oth.read_found_nothing),
         always_use_contents(oth.always_use_contents)
         { }
 
-    inmem_regular_t(inmem_regular_t && oth) :
+    inmem_regular_t(inmem_regular_t && oth) noexcept :
         inmem_base_t(oth), contents(oth.contents),
         read_found_nothing(oth.read_found_nothing),
         always_use_contents(oth.always_use_contents)
@@ -188,9 +188,9 @@ struct inmem_regular_t : inmem_base_t {
 
     bool always_use_contents { };  // set when symlink_src_tgt file inserted
 
-    sstring get_filename() const { return filename; }
+    sstring get_filename() const noexcept { return filename; }
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 // All members of this variant have default constructors so no need for
@@ -203,15 +203,16 @@ using inm_var_t = std::variant<inmem_other_t,
                                inmem_regular_t>;
 
 struct inmem_dir_t : inmem_base_t {
-    inmem_dir_t();   // cannot use designated initializer if given
+    inmem_dir_t() noexcept;   // cannot use designated initializer if given
 
-    inmem_dir_t(const sstring & filename_, const short_stat & a_shstat);
+    inmem_dir_t(const sstring & filename_,
+                const short_stat & a_shstat) noexcept;
 
-    inmem_dir_t(const inmem_dir_t & oth) :
+    inmem_dir_t(const inmem_dir_t & oth) noexcept :
                 inmem_base_t(oth),
                 sdirs_sp(oth.sdirs_sp),
                 par_pt_s(oth.par_pt_s), depth(oth.depth) { }
-    inmem_dir_t(inmem_dir_t && oth) : inmem_base_t(oth),
+    inmem_dir_t(inmem_dir_t && oth) noexcept : inmem_base_t(oth),
                                       sdirs_sp(oth.sdirs_sp),
                                       par_pt_s(oth.par_pt_s),
                                       depth(oth.depth) { }
@@ -229,18 +230,18 @@ struct inmem_dir_t : inmem_base_t {
     // these add_to_sdir_v() functions all return the index position in
     // the sdirs_sp->sdir_v[] vector into which an inmem_t object was
     // inserted. The inmem_t object is formed from the passed argument.
-    size_t add_to_sdir_v(inmem_other_t & n_oth);
-    size_t add_to_sdir_v(inmem_dir_t & n_dir);
-    size_t add_to_sdir_v(inmem_symlink_t & n_sym);
-    size_t add_to_sdir_v(inmem_device_t & n_dev);
-    size_t add_to_sdir_v(inmem_fifo_socket_t & n_fs);
-    size_t add_to_sdir_v(inmem_regular_t & n_reg);
+    size_t add_to_sdir_v(inmem_other_t & n_oth) noexcept;
+    size_t add_to_sdir_v(inmem_dir_t & n_dir) noexcept;
+    size_t add_to_sdir_v(inmem_symlink_t & n_sym) noexcept;
+    size_t add_to_sdir_v(inmem_device_t & n_dev) noexcept;
+    size_t add_to_sdir_v(inmem_fifo_socket_t & n_fs) noexcept;
+    size_t add_to_sdir_v(inmem_regular_t & n_reg) noexcept;
 
-    sstring get_filename() const { return filename; }
+    sstring get_filename() const noexcept { return filename; }
 
-    inm_var_t * get_subd_ivp(size_t index);
+    inm_var_t * get_subd_ivp(size_t index) noexcept;
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 // <<< instances of this struct are stored in a in-memory tree that uses lots
@@ -248,32 +249,35 @@ struct inmem_dir_t : inmem_base_t {
 struct inmem_t : inm_var_t {
     inmem_t() = default;
 
-    inmem_t(const inmem_other_t & i_oth) : inm_var_t(i_oth) { }
-    inmem_t(const inmem_dir_t & i_dir) : inm_var_t(i_dir) { }
-    inmem_t(const inmem_symlink_t & i_symlink) : inm_var_t(i_symlink) { }
-    inmem_t(const inmem_device_t & i_device) : inm_var_t(i_device) { }
-    inmem_t(const inmem_fifo_socket_t & i_fifo_socket)
+    inmem_t(const inmem_other_t & i_oth) noexcept : inm_var_t(i_oth) { }
+    inmem_t(const inmem_dir_t & i_dir) noexcept : inm_var_t(i_dir) { }
+    inmem_t(const inmem_symlink_t & i_symlink) noexcept
+                : inm_var_t(i_symlink) { }
+    inmem_t(const inmem_device_t & i_device) noexcept
+                : inm_var_t(i_device) { }
+    inmem_t(const inmem_fifo_socket_t & i_fifo_socket) noexcept
                 : inm_var_t(i_fifo_socket) { }
-    inmem_t(const inmem_regular_t & i_regular) : inm_var_t(i_regular) { }
+    inmem_t(const inmem_regular_t & i_regular) noexcept
+                : inm_var_t(i_regular) { }
 
-    inmem_t(const inmem_t & oth) : inm_var_t(oth) { }
+    inmem_t(const inmem_t & oth) noexcept : inm_var_t(oth) { }
 
-    inmem_t(inmem_t && oth) : inm_var_t(oth) { }
+    inmem_t(inmem_t && oth) noexcept : inm_var_t(oth) { }
 
-    inmem_base_t * get_basep()
+    inmem_base_t * get_basep() noexcept
                 { return reinterpret_cast<inmem_base_t *>(this); }
-    const inmem_base_t * get_basep() const
+    const inmem_base_t * get_basep() const noexcept
                 { return reinterpret_cast<const inmem_base_t *>(this); }
 
-    sstring get_filename() const;
+    sstring get_filename() const noexcept;
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 struct inmem_subdirs_t {
     inmem_subdirs_t() = default;
 
-    inmem_subdirs_t(size_t vec_init_sz);
+    inmem_subdirs_t(size_t vec_init_sz) noexcept;
 
     // vector of a directory's contents including subdirectories
     std::vector<inmem_t> sdir_v;
@@ -285,7 +289,7 @@ struct inmem_subdirs_t {
     // lookup for for that latter case.
     std::map<sstring, size_t> sdir_fn_ind_m;  // sdir filename to index
 
-    void debug(const sstring & intro = "") const;
+    void debug(const sstring & intro = "") const noexcept;
 };
 
 enum class inmem_var_e {
@@ -428,10 +432,10 @@ static auto dir_opt { fs::directory_options::skip_permission_denied };
 
 static std::error_code clone_work(int dc_depth, const fs::path & src_pt,
                                   const fs::path & dst_pt,
-                                  const struct opts_t * op);
+                                  const struct opts_t * op) noexcept;
 static std::error_code cache_src(int dc_depth, inmem_dir_t * odirp,
                                  const fs::path & src_pt,
-                                 const struct opts_t * op);
+                                 const struct opts_t * op) noexcept;
 
 /**
  * @param v - sorted vector instance
@@ -439,7 +443,7 @@ static std::error_code cache_src(int dc_depth, inmem_dir_t * odirp,
  * @return 0-based index if data found, -1 otherwise
 */
 template <typename T>
-    int binary_search_find_index(std::vector<T> v, const T & data)
+    int binary_search_find_index(std::vector<T> v, const T & data) noexcept
     {
         auto it = std::lower_bound(v.begin(), v.end(), data);
         if (it == v.end() || *it != data) {
@@ -629,7 +633,7 @@ pr4ser(int vb_ge, const sstring & e1msg, const sstring & e2msg,
 }
 
 void
-inmem_base_t::debug_base(const sstring & intro) const
+inmem_base_t::debug_base(const sstring & intro) const noexcept
 {
     if (intro.size() > 0)
         fprintf(stderr, "%s\n", intro.c_str());
@@ -641,13 +645,13 @@ inmem_base_t::debug_base(const sstring & intro) const
         fprintf(stderr, "  this=%p\n", static_cast<const void *>(this));
 }
 
-inmem_subdirs_t:: inmem_subdirs_t(size_t vec_init_sz) :
+inmem_subdirs_t:: inmem_subdirs_t(size_t vec_init_sz) noexcept :
                 sdir_v(vec_init_sz), sdir_fn_ind_m()
 {
 }
 
 void
-inmem_subdirs_t::debug(const sstring & intro) const
+inmem_subdirs_t::debug(const sstring & intro) const noexcept
 {
     size_t sdir_v_sz { sdir_v.size() };
     size_t sdir_fn_ind_m_sz { sdir_fn_ind_m.size() };
@@ -673,7 +677,7 @@ inmem_subdirs_t::debug(const sstring & intro) const
 }
 
 void
-inmem_other_t::debug(const sstring & intro) const
+inmem_other_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  other file type\n");
@@ -682,26 +686,27 @@ inmem_other_t::debug(const sstring & intro) const
 }
 
 // inmem_dir_t constructor
-inmem_dir_t::inmem_dir_t() : sdirs_sp(std::make_shared<inmem_subdirs_t>())
+inmem_dir_t::inmem_dir_t() noexcept
+	: sdirs_sp(std::make_shared<inmem_subdirs_t>())
 {
 }
 
 inmem_dir_t::inmem_dir_t(const sstring & filename_,
-                         const short_stat & a_shstat)
+                         const short_stat & a_shstat) noexcept
                 : inmem_base_t(filename_, a_shstat, 0),
                   sdirs_sp(std::make_shared<inmem_subdirs_t>())
 {
 }
 
 inm_var_t *
-inmem_dir_t::get_subd_ivp(size_t index)
+inmem_dir_t::get_subd_ivp(size_t index) noexcept
 {
     return (index < sdirs_sp->sdir_v.size()) ?
            &sdirs_sp->sdir_v[index] : nullptr;
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_other_t & n_oth)
+inmem_dir_t::add_to_sdir_v(inmem_other_t & n_oth) noexcept
 {
     if (sdirs_sp) {
         size_t sz = sdirs_sp->sdir_v.size();
@@ -712,7 +717,7 @@ inmem_dir_t::add_to_sdir_v(inmem_other_t & n_oth)
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_dir_t & n_dir)
+inmem_dir_t::add_to_sdir_v(inmem_dir_t & n_dir) noexcept
 {
     if (sdirs_sp) {
         size_t sz { sdirs_sp->sdir_v.size() };
@@ -726,7 +731,7 @@ inmem_dir_t::add_to_sdir_v(inmem_dir_t & n_dir)
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_symlink_t & n_sym)
+inmem_dir_t::add_to_sdir_v(inmem_symlink_t & n_sym) noexcept
 {
     if (sdirs_sp) {
         size_t sz { sdirs_sp->sdir_v.size() };
@@ -737,7 +742,7 @@ inmem_dir_t::add_to_sdir_v(inmem_symlink_t & n_sym)
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_device_t & n_dev)
+inmem_dir_t::add_to_sdir_v(inmem_device_t & n_dev) noexcept
 {
     if (sdirs_sp) {
         size_t sz { sdirs_sp->sdir_v.size() };
@@ -748,7 +753,7 @@ inmem_dir_t::add_to_sdir_v(inmem_device_t & n_dev)
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_fifo_socket_t & n_fs)
+inmem_dir_t::add_to_sdir_v(inmem_fifo_socket_t & n_fs) noexcept
 {
     if (sdirs_sp) {
         size_t sz { sdirs_sp->sdir_v.size() };
@@ -759,7 +764,7 @@ inmem_dir_t::add_to_sdir_v(inmem_fifo_socket_t & n_fs)
 }
 
 size_t
-inmem_dir_t::add_to_sdir_v(inmem_regular_t & n_reg)
+inmem_dir_t::add_to_sdir_v(inmem_regular_t & n_reg) noexcept
 {
     if (sdirs_sp) {
         size_t sz { sdirs_sp->sdir_v.size() };
@@ -770,7 +775,7 @@ inmem_dir_t::add_to_sdir_v(inmem_regular_t & n_reg)
 }
 
 void
-inmem_dir_t::debug(const sstring & intro) const
+inmem_dir_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  directory\n");
@@ -783,7 +788,7 @@ inmem_dir_t::debug(const sstring & intro) const
 }
 
 void
-inmem_symlink_t::debug(const sstring & intro) const
+inmem_symlink_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  symlink\n");
@@ -791,7 +796,7 @@ inmem_symlink_t::debug(const sstring & intro) const
 }
 
 void
-inmem_device_t::debug(const sstring & intro) const
+inmem_device_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  device type: %s\n", is_block_dev ? "block" : "char");
@@ -799,14 +804,14 @@ inmem_device_t::debug(const sstring & intro) const
 }
 
 void
-inmem_fifo_socket_t::debug(const sstring & intro) const
+inmem_fifo_socket_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  %s\n", "FIFO or socket");
 }
 
 void
-inmem_regular_t::debug(const sstring & intro) const
+inmem_regular_t::debug(const sstring & intro) const noexcept
 {
     debug_base(intro);
     fprintf(stderr, "  regular file:\n");
@@ -819,15 +824,16 @@ inmem_regular_t::debug(const sstring & intro) const
 }
 
 sstring
-inmem_t::get_filename() const
+inmem_t::get_filename() const noexcept
 {
-    return std::visit([]( auto&& arg ){ return arg.get_filename(); }, *this);
+    return std::visit([](auto&& arg ) noexcept
+        { return arg.get_filename(); }, *this);
 }
 
 void
-inmem_t::debug(const sstring & intro) const
+inmem_t::debug(const sstring & intro) const noexcept
 {
-    std::visit([& intro]( auto&& arg ){ arg.debug(intro); }, *this);
+    std::visit([& intro]( auto&& arg ) noexcept { arg.debug(intro); }, *this);
 }
 
 // In returned pair .first is true if pt found in vec, else false and
@@ -856,7 +862,7 @@ find_in_sorted_vec(std::vector<sstring> & vec, const sstring & pt,
 // path of a symlink).
 static bool
 path_contains_canon(const fs::path & haystack_c_pt,
-                    const fs::path & needle_c_pt)
+                    const fs::path & needle_c_pt) noexcept
 {
     auto hay_c_sz { haystack_c_pt.string().size() };
     auto need_c_sz { needle_c_pt.string().size() };
@@ -880,7 +886,7 @@ path_contains_canon(const fs::path & haystack_c_pt,
 }
 
 static void
-reg_s_err_stats(int err, struct stats_t * q)
+reg_s_err_stats(int err, struct stats_t * q) noexcept
 {
     if (err == EACCES)
         ++q->num_reg_s_eacces;
@@ -895,7 +901,7 @@ reg_s_err_stats(int err, struct stats_t * q)
 }
 
 static void
-reg_d_err_stats(int err, struct stats_t * q)
+reg_d_err_stats(int err, struct stats_t * q) noexcept
 {
     if (err == EACCES)
         ++q->num_reg_d_eacces;
@@ -914,7 +920,7 @@ reg_d_err_stats(int err, struct stats_t * q)
 // (base_pt_s). If an error is detected, ec is set appropriately.
 static std::vector<sstring>
 split_path(const sstring & par_pt_s, const sstring & base_pt_s,
-           const struct opts_t *op, std::error_code & ec)
+           const struct opts_t *op, std::error_code & ec) noexcept
 {
     std::vector<sstring> res;
     const char * pp_cp { par_pt_s.c_str() };
@@ -965,7 +971,8 @@ split_path(const sstring & par_pt_s, const sstring & base_pt_s,
 
 // Returns number of bytes read, -1 for general error, -2 for timeout
 static int
-read_err_wait(int from_fd, uint8_t * bp, int err, const struct opts_t *op)
+read_err_wait(int from_fd, uint8_t * bp, int err,
+              const struct opts_t *op) noexcept
 {
     int num { -1 };
     struct stats_t * q { &op->mutp->stats };
@@ -999,7 +1006,7 @@ read_err_wait(int from_fd, uint8_t * bp, int err, const struct opts_t *op)
 // Returns 0 on success, else a Unix like errno value is returned.
 static int
 xfr_vec2file(const std::vector<uint8_t> & v, const sstring & destin_file,
-             mode_t st_mode, const struct opts_t * op)
+             mode_t st_mode, const struct opts_t * op) noexcept
 {
     int res { };
     int destin_fd { -1 };
@@ -1044,7 +1051,7 @@ fini:
 // Returns 0 on success, else a Unix like errno value is returned.
 static int
 xfr_reg_file2inmem(const sstring & from_file, inmem_regular_t & ireg,
-                   const struct opts_t * op)
+                   const struct opts_t * op) noexcept
 {
     int res { 0 };
     int from_fd { -1 };
@@ -1129,7 +1136,7 @@ fini:
 // Returns 0 on success, else a Unix like errno value is returned.
 static int
 xfr_reg_inmem2file(const inmem_regular_t & ireg, const sstring & destin_file,
-                   const struct opts_t * op)
+                   const struct opts_t * op) noexcept
 {
     mode_t from_perms { ireg.shstat.st_mode & stat_perm_mask };
 
@@ -1139,7 +1146,7 @@ xfr_reg_inmem2file(const inmem_regular_t & ireg, const sstring & destin_file,
 // N.B. Only root can successfully invoke the mknod(2) system call
 static int
 xfr_dev_inmem2file(const inmem_device_t & idev, const sstring & destin_file,
-                   const struct opts_t * op)
+                   const struct opts_t * op) noexcept
 {
     int res { };
     struct stats_t * q { &op->mutp->stats };
@@ -1164,7 +1171,7 @@ xfr_dev_inmem2file(const inmem_device_t & idev, const sstring & destin_file,
 // Returns 0 on success, else a Unix like errno value is returned.
 static int
 xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
-                  const struct opts_t * op)
+                  const struct opts_t * op) noexcept
 {
     int res { 0 };
     int from_fd { -1 };
@@ -1248,7 +1255,7 @@ fini:
 static std::error_code
 xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
              const struct stat & src_stat, const fs::path & dst_pt,
-             const struct opts_t * op)
+             const struct opts_t * op) noexcept
 {
     int res { };
     std::error_code ec { };
@@ -1304,7 +1311,7 @@ xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
 
 static void
 update_stats(fs::file_type s_sym_ftype, fs::file_type s_ftype, bool hidden,
-             const struct opts_t * op)
+             const struct opts_t * op) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
 
@@ -1362,7 +1369,7 @@ update_stats(fs::file_type s_sym_ftype, fs::file_type s_ftype, bool hidden,
 }
 
 static void
-show_stats(const struct opts_t * op)
+show_stats(const struct opts_t * op) noexcept
 {
     bool extra { (op->want_stats > 1) || (verbose > 0) };
     bool eagain_likely { (op->wait_given && (op->reglen > 0)) };
@@ -1473,7 +1480,7 @@ show_stats(const struct opts_t * op)
 
 static fs::path
 read_symlink(const fs::path & pt, const struct opts_t * op,
-             std::error_code & ec)
+             std::error_code & ec) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
     const auto target_pt = fs::read_symlink(pt, ec);
@@ -1500,11 +1507,11 @@ static bool
 symlink_clone_work(int dc_depth, const fs::path & pt,
                    const fs::path & prox_pt, const fs::path & ongoing_d_pt,
                    bool deref_entry, const struct opts_t * op,
-                   std::error_code & ec)
+                   std::error_code & ec) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
-
     const fs::path target_pt = read_symlink(pt, op, ec);
+
     if (ec)
         return false;
     fs::path d_lnk_pt { prox_pt / pt.filename() };
@@ -1627,7 +1634,7 @@ static void
 dir_clone_work(int dc_depth, const fs::path & pt,
                fs::recursive_directory_iterator & itr, dev_t st_dev,
                fs::perms s_perms, const fs::path & ongoing_d_pt,
-               const struct opts_t * op, std::error_code & ec)
+               const struct opts_t * op, std::error_code & ec) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
 
@@ -1701,7 +1708,7 @@ dir_clone_work(int dc_depth, const fs::path & pt,
 // processing will continue to the next node.
 static std::error_code
 clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
-           const struct opts_t * op)
+           const struct opts_t * op) noexcept
 {
     struct mut_opts_t * omutp { op->mutp };
     bool possible_exclude { ! omutp->exclude_v.empty() };
@@ -1987,7 +1994,7 @@ static bool
 symlink_cache_work(int dc_depth, const fs::path & pt,
                    const short_stat & a_shstat, inmem_dir_t * & l_odirp,
                    inmem_dir_t * prev_odirp, bool deref_entry,
-                   const struct opts_t * op, std::error_code & ec)
+                   const struct opts_t * op, std::error_code & ec) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
     const auto filename = pt.filename();
@@ -2055,7 +2062,7 @@ process_as_symlink:
 
 static std::error_code
 cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
-          const struct opts_t * op)
+          const struct opts_t * op) noexcept
 {
     struct mut_opts_t * omutp { op->mutp };
     bool possible_exclude
@@ -2330,7 +2337,8 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & src_pt,
 }
 
 static size_t
-count_cache(const inmem_dir_t * odirp, bool recurse, const struct opts_t * op)
+count_cache(const inmem_dir_t * odirp, bool recurse,
+            const struct opts_t * op) noexcept
 {
     size_t sz, k;
 
@@ -2353,7 +2361,7 @@ count_cache(const inmem_dir_t * odirp, bool recurse, const struct opts_t * op)
 // For simplicity and speed, exclusions and dereferences are ignored.
 static void
 depth_count_cache(const inmem_dir_t * odirp, std::vector<size_t> & ra,
-                  int depth = -1)
+                  int depth = -1) noexcept
 {
     size_t sz, v_sz;
     size_t d { static_cast<size_t>(depth + 1) };  // depth starts at -1
@@ -2375,7 +2383,7 @@ depth_count_cache(const inmem_dir_t * odirp, std::vector<size_t> & ra,
 
 // For simplicity and speed, exclusions and dereferences are ignored.
 static void
-depth_count_src(const fs::path & src_pt, std::vector<size_t> & ra)
+depth_count_src(const fs::path & src_pt, std::vector<size_t> & ra) noexcept
 {
     size_t v_sz;
     fs::path prev_pt { src_pt };
@@ -2407,7 +2415,7 @@ depth_count_src(const fs::path & src_pt, std::vector<size_t> & ra)
 
 static void
 show_cache_not_dir(const inmem_t & a_nod,
-                   [[maybe_unused]] const struct opts_t * op)
+                   [[maybe_unused]] const struct opts_t * op) noexcept
 {
     if (const auto * cothp { std::get_if<inmem_other_t>(&a_nod) }) {
         scerr << "  other filename: " << cothp->filename << "\n";
@@ -2435,7 +2443,8 @@ show_cache_not_dir(const inmem_t & a_nod,
 }
 
 static void
-show_cache(const inmem_t & a_nod, bool recurse, const struct opts_t * op)
+show_cache(const inmem_t & a_nod, bool recurse,
+           const struct opts_t * op) noexcept
 {
     const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod) };
 
@@ -2467,7 +2476,7 @@ show_cache(const inmem_t & a_nod, bool recurse, const struct opts_t * op)
 
 // Transforms a source path to the corresponding destination path
 static sstring
-tranform_src_pt2dst(const sstring & src_pt, const struct opts_t * op)
+tranform_src_pt2dst(const sstring & src_pt, const struct opts_t * op) noexcept
 {
     if (src_pt.size() < op->mutp->starting_src_sz)
         return "";
@@ -2477,7 +2486,7 @@ tranform_src_pt2dst(const sstring & src_pt, const struct opts_t * op)
 
 static std::error_code
 unroll_cache_not_dir(const sstring & s_pt_s, const sstring & d_pt_s,
-                     const inmem_t & a_nod, const struct opts_t * op)
+                     const inmem_t & a_nod, const struct opts_t * op) noexcept
 {
     int res { };
     std::error_code ec { };
@@ -2569,7 +2578,7 @@ unroll_cache_is_dir(const sstring & dst_pt_s, const inmem_dir_t * dirp,
 // Unroll cache into the destination.
 static std::error_code
 unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
-             const struct opts_t * op)
+             const struct opts_t * op) noexcept
 {
     std::error_code ec { };
 
@@ -2610,7 +2619,7 @@ unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
 }
 
 static std::error_code
-do_clone(const struct opts_t * op)
+do_clone(const struct opts_t * op) noexcept
 {
     struct stat root_stat;
     std::error_code ec { };
@@ -2650,7 +2659,7 @@ do_clone(const struct opts_t * op)
 }
 
 static std::error_code
-do_cache(inmem_t & src_rt_cache, const struct opts_t * op)
+do_cache(inmem_t & src_rt_cache, const struct opts_t * op) noexcept
 {
     struct stat root_stat;
     std::error_code ec { };
