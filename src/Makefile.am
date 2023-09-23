@@ -13,7 +13,7 @@ bin_PROGRAMS = clone_pseudo_fs
 if DEBUG
 # This is active if --enable-debug given to ./configure
 DBG_CFLAGS = -Wextra -Wmisleading-indentation -Wduplicated-cond -Wlogical-op -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument -Wduplicated-branches -Wjump-misses-init
-DBG_CXXFLAGS = -DDEBUG -Wextra -Wmisleading-indentation -Wduplicated-cond -Wlogical-op -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument -Wduplicated-branches
+DBG_CXXFLAGS = -g -ggdb -DDEBUG -Wextra -Wmisleading-indentation -Wduplicated-cond -Wlogical-op -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument -Wduplicated-branches
 DBG_CXXCLANGFLAGS = -DDEBUG -Wextra -Wmisleading-indentation -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument
 DBG_CPPFLAGS = -DDEBUG
 else
@@ -40,12 +40,16 @@ AM_CFLAGS = -Wall -W $(DBG_CFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c++20 --analyze $(DBG_CXXFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c++23 $(DBG_CXXFLAGS)
 
+# For g++ below
 AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXFLAGS)
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 -fanalyzer  $(DBG_CXXFLAGS)
+
+# For clang++ below
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 --analyze  $(DBG_CXXCLANGFLAGS)
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXCLANGFLAGS)
 
-clone_pseudo_fs_SOURCES = clone_pseudo_fs.cpp
+clone_pseudo_fs_SOURCES = clone_pseudo_fs.cpp \
+			  bwprint.hpp
 
 distclean-local:
 	rm -rf .deps
