@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230922 [svn: r14]";
+static const char * const version_str = "0.90 20230923 [svn: r15]";
 
 #include <iostream>
 #include <fstream>
@@ -558,7 +558,7 @@ static inline sstring s(const fs::path & pt) { return pt.string(); }
 
 static const char * const usage_message1 {
     "Usage: clone_pseudo_fs [--cache] [--dereference=SPTSYM]\n"
-    "                       [--destination=DPATH] [--exclude=PAT] "
+    "                       [--destination=DPATH] [--exclude=PATT] "
     "[--excl-fn=EFN]\n"
     "                       [--extra] [--help] [--hidden] "
     "[--max-depth=MAXD]\n"
@@ -577,13 +577,14 @@ static const char * const usage_message1 {
     "directory\n"
     "                                      under DPATH (i.e. a 'deep' copy)\n"
     "    --destination=DPATH|-d DPATH    DPATH is clone destination (def:\n"
-    "                                    /tmp/sys (unless SPATH given))\n"
-    "    --exclude=PAT|-e PAT    PAT is a glob pattern, matching files and\n"
-    "                            directories excluded (def: nothing "
+    "                                    /tmp/sys (no default if SPATH "
+    "given))\n"
+    "    --exclude=PATT|-e PATT    PAT is a glob pattern, matching files and\n"
+    "                              directories excluded (def: nothing "
     "excluded)\n"
-    "    --excl-fn=EFN|-E EFN    directories and symlinks whose (link) "
-    "names\n"
-    "                            match EFN will be excluded (no path)\n"
+    "    --excl-fn=EFN|-E EFN    exclude directories and symlinks whose "
+    "(link)\n"
+    "                            filenames match EFN will be excluded\n"
     "    --extra|-x         do some extra sanity checking\n"
     "    --help|-h          this usage information\n"
     "    --hidden|-H        clone hidden files (def: ignore them)\n"
@@ -619,7 +620,7 @@ static const char * const usage_message2 {
     "The default is only\nto copy a maximum of 256 bytes from regular files."
     " If the --cache option\nis given, a two pass clone is used; the first "
     "pass creates an in memory\ntree. The --dereference=SPTSYM , "
-    "--exclude=PAT and --prune=PRUN options\ncan be called repeatedly.\n"
+    "--exclude=PATT and --prune=PRUN options\ncan be called repeatedly.\n"
 };
 
 static void
@@ -2450,9 +2451,6 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
                 if (got_prune_exact) {
                     a_dir.prune_mask |= prune_exact;
                     ++q->num_prune_exact;
-#if 0
-pr_err(-1, "matched for prune: {}{}\n", s(par_pt / filename), l());
-#endif
                 }
                 prev_dir_ind = l_odirp->add_to_sdir_v(a_dir);
             }
@@ -3122,7 +3120,7 @@ main(int argc, char * argv[])
             op->prune_given = true;
             l_pt = fs::canonical(optarg, ec);
             if (ec)
-                pr_err(-1, "<< failed to find {}; ignored", optarg, l(ec));
+                pr_err(-1, "<< failed to find {}; ignored\n", optarg, l(ec));
             else
                 op->mutp->prune_v.push_back(l_pt.string());
             break;
@@ -3328,6 +3326,8 @@ main(int argc, char * argv[])
     // as the number and size of the binary searches will move toward zero.
     // There may be downsides ...
     if (op->exclude_given) {
+        bool excl_warning_issued {};
+
         for (const auto & ss : op->cl_exclude_v) {
             const char * ex_ccp = ss.c_str();
 
@@ -3340,17 +3340,16 @@ main(int argc, char * argv[])
             res = glob(ex_ccp, glob_opt, nullptr, &ex_paths);
             if (res != 0) {
                 if (res == GLOB_NOMATCH)
-                    pr_err(0, "Warning: --exclude={} did not match any "
-                           "file, continue\n", ex_ccp);
+                    pr_err(-1, "Warning: --exclude={} did not match any "
+                           "files, continue\n", ex_ccp);
                 else
-                    pr_err(0, "glob() failed with --exclude={}, ignore\n",
+                    pr_err(-1, "glob() failed with --exclude={}, ignore\n",
                            ex_ccp);
+                excl_warning_issued = true;
             }
         }
 
         if (ex_glob_seen) {
-            bool first_reported = false;
-
             for(size_t k { }; k < ex_paths.gl_pathc; ++k) {
                 fs::path ex_pt { ex_paths.gl_pathv[k] };
                 bool is_absol = ex_pt.is_absolute();
@@ -3360,25 +3359,27 @@ main(int argc, char * argv[])
                     if (ec) {
                         pr_err(-1, "unable to get current path, "
                                "{} ignored{}\n", s(ex_pt), l(ec));
+                        excl_warning_issued = true;
                         continue;
                     }
                     ex_pt = cur_pt / ex_pt;
                 }
                 fs::path c_ex_pt { fs::canonical(ex_pt, ec) };
-                if (ec)
-                    pr_err(1, "{}: exclude path rejected{}\n", s(ex_pt),
+                if (ec) {
+                    excl_warning_issued = true;
+                    pr_err(-1, "{}: exclude path rejected{}\n", s(ex_pt),
                            l(ec));
-                else {
+                } else {
                     if (path_contains_canon(op->source_pt, c_ex_pt)) {
                         op->mutp->glob_exclude_v.push_back(ex_pt.string());
                         pr_err(5, "accepted canonical exclude path: {}\n",
                                s(ex_pt));
                         if (c_ex_pt == op->destination_pt)
                             destin_excluded = true;
-                    } else if (! first_reported) {
-                        pr_err(0, "{}: ignored as not contained in exclude "
-                               "source\n", s(ex_pt));
-                        first_reported = true;
+                    } else if (! excl_warning_issued) {
+                        pr_err(-1, "ignored {} as not contained in source: "
+                               "{}\n", s(ex_pt), s(op->source_pt));
+                        excl_warning_issued = true;
                     }
                 }
             }
@@ -3399,6 +3400,8 @@ main(int argc, char * argv[])
                        "{}\n", ex_sz);
             }
         }
+        if (excl_warning_issued)
+            pr_err(-1, "\n");   // to help user see the warning
     }
     if (op->prune_given) {
         auto pr_sz = op->mutp->prune_v.size();
@@ -3414,6 +3417,15 @@ main(int argc, char * argv[])
             pr_err(0, "prune vector size after sort then unique is "
                        "{}\n", pr_sz);
         }
+        bool prun_warning_issued {};
+        for (const auto & tt : op->mutp->prune_v) {
+            prun_warning_issued = path_contains_canon(op->source_pt, tt);
+            if (prun_warning_issued)
+                break;
+        }
+        if (! prun_warning_issued)
+            pr_err(-1, "--prune= option given but argument(s) not contained "
+                   "in source: {}\n", s(op->source_pt));
     }
     // Creates a sorted vector (without duplicates) of filenames (containing
     // no '/' characters). The resultant op->excl_fn_v vector is not modified

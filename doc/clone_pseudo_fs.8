@@ -4,7 +4,7 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
 .B clone_pseudo_fs
 [\fI\-\-cache\fR] [\fI\-\-dereference=SPTSYM\fR] [\fI\-\-destination=DPATH\fR]
-[\fI\-\-exclude=PAT\fR] [\fI\-\-excl\-fn=EFN\fR]  [\fI\-\-extra\fR]
+[\fI\-\-exclude=PATT\fR] [\fI\-\-excl\-fn=EFN\fR]  [\fI\-\-extra\fR]
 [\fI\-\-help\fR] [\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR]
 [\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR] [\fI\-\-prune=PRUN\fR]
 [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR] [\fI\-\-statistics\fR]
@@ -17,8 +17,8 @@ systems such as sysfs which is typically mounted under /sys .
 The default action is to clone (copy) /sys and below to /tmp/sys . Only that
 file system instance is copied (e.g. not /sys/kernel/debug and below).
 Hidden files are ignored. Only a maximum of 256 bytes in regular files is
-copied. Symbolic links (symlinks), even dangling ones, are also copied. Most
-of these defaults can be changed by command line options.
+copied. Symbolic links (symlinks), even dangling ones, are also copied but
+not followed. Most of these defaults can be changed by command line options.
 .PP
 Why do this? The author's motivation is USB\-C PD information appearing in
 sysfs thanks to the ucsi_acpi driver in the Linux kernel. At time of writing
@@ -41,7 +41,7 @@ to /tmp/sys/a2). There are some sanity checks but using the
 file systems have waiting reads and to cope with these the \fI\-\-wait=MS_R\fR
 option should be used (e.g. when cloning tracefs usually found
 under /sys/kernel/trace ). If a pseudo file system has only a few waiting
-reads (e.g. procfs has one at /proc/kmsg) then the \fI\-\-exclude=PAT\fR can
+reads (e.g. procfs has one at /proc/kmsg) then the \fI\-\-exclude=PATT\fR can
 be used to bypass the trouble makers.
 .PP
 Calling this utility a "snapshot" copy would be a bit of a stretch as it
@@ -70,7 +70,7 @@ long options can also take underscore, and vice versa (e.g.
 \fB\-c\fR, \fB\-\-cache\fR
 perform a two pass clone/copy. The first pass copies the selected directories
 to a tree based structure held in ram (memory). Each 'node' in that tree
-consumes a little over 120 bytes. The contents of regular file (see
+consumes a little over 120 bytes. The contents of a regular file (see
 \fI\-\-reglen=RLEN\fR) is not copied if this option is given once. If this
 option is given two or more times, the contents of each regular file is
 copies into the memory based tree.
@@ -83,16 +83,17 @@ a pseudo file system, it could be changing rapidly in response to events in
 the system. Since it is not practical to freeze (or lock) a pseudo file
 system while it is cloned, the next best approach is to reduce the time taken
 to scan \fISPATH\fR. As a rough estimation, scanning directories is faster
-than opening (or creating) files.
+than opening files and is definitely faster than creating new files and
+directories.
 .TP
 \fB\-R\fR, \fB\-\-dereference\fR=\fISPTSYM\fR
 \fISPTSYM\fR is assumed to be a symbolic link under \fISPATH\fR. During the
 recursive directory scan (of \fISPATH\fR), symbolic links are visited but the
- scan does 'descend' into the target of the symbolic link even if that target
-is itself a directory. If a symbolic link does match \fISPTSYM\fR then a new
-directory is created in \fIDPATH\fR with the link name of \fISPTSYM\fR and
-this utility descends into \fISPTSYM\fR's target name and copies it. This is
-sometimes called a 'deep' copy.
+scan does not 'descend' into the target of the symbolic link even if that
+target is itself a directory. If a symbolic link matches \fISPTSYM\fR then a
+new directory is created in \fIDPATH\fR with the link name of \fISPTSYM\fR
+and this utility descends into \fISPTSYM\fR's target name and copies it. This
+action is sometimes called a 'deep' copy.
 .br
 This option may be given many times, any \fISPTSYM\fR that does not match a
 symlink under \fISPATH\fR is discarded, as are duplicates. As soon as a match
@@ -101,7 +102,7 @@ list (of \fISPTSYM\fRs) that each symbolic link in the scan is checked
 against. This will stop symlink "cycles" causing infinite recursion.
 .br
 Notice that this option (\fI\-\-dereference=SPTSYM\fR]) only acts on exact
-matches on symlinks while the \fI\-\-exclude=PAT\fR option accepts patterns
+matches on symlinks while the \fI\-\-exclude=PATT\fR option accepts patterns
 that are subject to "glob" expansion and can match any type of node.
 .br
 The long option \fI\-\-dereference=SPTSYM\fR may be shortened to
@@ -119,18 +120,18 @@ created. Once the \fI\-\-source=SPATH\fR option is given then either this
 option must be specified or the \fI\-\-no\-dst\fR option must be given.
 .br
 It is assumed the \fIDPATH\fR will be in a "normal" storage type file system.
-Many pseudo file systems are not useful for general purpose storage by user
+Most pseudo file systems are not useful for general purpose storage by user
 space programs (e.g. sysfs; counter example: tmpfs).
 .br
 A trailing '/' on \fIDPATH\fR is ignored. The long option
 \fI\-\-destination=DPATH\fR may be shortened to \fI\-\-dst=DPATH\fR .
 .TP
-\fB\-e\fR, \fB\-\-exclude\fR=\fIPAT\fR
+\fB\-e\fR, \fB\-\-exclude\fR=\fIPATT\fR
 supply one or more file locations in the \fISPATH\fR subtree that will be
 excluded from the clone operation. If such a location is a directory, then
-the subtree under it is not scanned nor cloned. In this context \fIPAT\fR
+the subtree under it is not scanned nor cloned. In this context \fIPATT\fR
 stands for "pattern" and the glob(3) system library call is used to match
-zero or more file locations that will be excluded. Note that \fIPAT\fR
+zero or more file locations that will be excluded. Note that \fIPATT\fR
 may need to be surrounded by single or double quotes to stop shell
 expansion.
 .br
@@ -140,10 +141,10 @@ process/task directories may help. For example: \-\-exclude='/proc/[0\-9]*'
 \-\-exclude=/proc/self . Note that quotes are not needed around
 /proc/self but are needed around '/proc/[0\-9]*' .
 .br
-Beware: a trailing slash on \fIPAT\fR is a different glob to the same
-\fIPAT\fR with the slash removed. In most cases there should not be
+Beware: a trailing slash on \fIPATT\fR is a different glob to the same
+\fIPATT\fR with the slash removed. In most cases there should not be
 a trailing slash. Note that glob expansion takes place well before the
-scan of \fISPATH\fR starts and any \fIPAT\fR expressions not matching
+scan of \fISPATH\fR starts and any \fIPATT\fR expressions not matching
 file at that time are ignored.
 .TP
 \fB\-E\fR, \fB\-\-excl\-fn\fR=\fIEFN\fR
@@ -154,7 +155,7 @@ the comparison is on the link name, not the target name.
 .br
 A directory filename (e.g. 'subsystem') can be matched multiple times.
 This option may be given multiple times and used in conjunction with
-the \fI\-\-exclude=PAT\fR and \fI\-\-prune=PRUN\fR options to reduce
+the \fI\-\-exclude=PATT\fR and \fI\-\-prune=PRUN\fR options to reduce
 the size of output written to \fIDPATH\fR.
 .TP
 \fB\-x\fR, \fB\-\-extra\fR
@@ -221,7 +222,7 @@ different file systems often have different characteristics.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIPRUN\fR
 \fIPRUN\fR should be a path matching a directory under \fISPATH\fR. This
-option can be given multiple times. 
+option can be given multiple times.
 .br
 All nodes including and below each matched \fIPRUN\fR directory node will
 appear under \fIDPATH\fR (i.e. the output). Below each \fIPRUN\fR
@@ -347,7 +348,7 @@ the clone operation means that the files under a directory are scanned
 within milliseconds or less after their parent directory is found.
 .SH DEREFERENCE AND EXCLUDE
 These options are designed so that \fI\-\-dereference=SPTSYM\fR is as narrow
-as possible while \fI\-\-exclude=PAT\fR is as broad as possible. The former
+as possible while \fI\-\-exclude=PATT\fR is as broad as possible. The former
 increases the size of the clone which will slow the clone operation down.
 [Even worse they could lead to cycles which would continue indefinitely,
 but the \fI\-\-max\-depth=MAXD\fR option will stop such a cycle, if given.]
@@ -362,7 +363,7 @@ file systems typically don't hold user data, rather they hold metadata (or
 data about data).
 .PP
 When a single invocation uses both the \fI\-\-dereference=SPTSYM\fR and the
-\fI\-\-exclude=PAT\fR options, the result is typically what one would
+\fI\-\-exclude=PATT\fR options, the result is typically what one would
 hope for. A good example is cloning procfs as the numbered directories are
 process identifiers (PIDs) running on the system at the time of the clone.
 Cloning these takes a fair amount of time and space and it is hard to see
@@ -401,7 +402,7 @@ matches are marked as "exact". In the second pass those exact marks
 are propagated up (toward the root) and down (toward the leaf nodes).
 The "up" marks form a chain while the down marks are all the children,
 grandchildren, etc of the node with the exact mark. Nodes in the "down"
-marks that are symlinks are followed. 
+marks that are symlinks are followed.
 .PP
 Why not propagate the marks in the first pass? Symlinks again! A marked
 symlink may be dangling at the point that it is processed in the first
@@ -412,6 +413,13 @@ that symlinks may still be dangling due to exclusions or pointing
 outside or to another pseudo file system.
 .PP
 The third pass only outputs nodes that have been marked.
+.SH "ORDER OF OPERATIONS"
+First command line options are processed. This includes doing "glob" (or
+file) expansions for the \fI\-\-exclude=PATT\fR option.
+.PP
+As a general rule the dereference option is applied first, followed by
+exclude (both \fI\-\-exclude=PATT\fR and \fI\-\-excl\-fn=EFN\fR options)
+and finally prune the option is applied.
 .SH CLONING SYSFS
 An instance of the sysfs file pseudo file system is typically mounted under
 the /sys directory in Linux. So many utilities and tools like systemd
@@ -550,6 +558,9 @@ to be larger. That file is needed by lsblk to populate the MOUNTPOINTS
 column. Notice that some utilities taking long options that have an
 associated argument can optionally take an "=" between the option and its
 argument (e.g. this utility) while others don't (e.g. lsblk and lsmem).
+.PP
+Probably the best examples can be found under the examples directory of
+the clone_pseudo_fs source package.
 .SH AUTHOR
 Written by Douglas Gilbert
 .SH "REPORTING BUGS"

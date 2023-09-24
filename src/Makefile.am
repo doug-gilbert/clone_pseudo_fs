@@ -45,8 +45,8 @@ AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXFLAGS)
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 -fanalyzer  $(DBG_CXXFLAGS)
 
 # For clang++ below
-## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 --analyze  $(DBG_CXXCLANGFLAGS)
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXCLANGFLAGS)
+## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 --analyze  $(DBG_CXXCLANGFLAGS)
 
 clone_pseudo_fs_SOURCES = clone_pseudo_fs.cpp \
 			  bwprint.hpp

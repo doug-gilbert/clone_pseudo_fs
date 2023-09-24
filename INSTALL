@@ -1,3 +1,11 @@
+Note:
+The source for clone_pseudo_fs is written in C++ and expects (almost)
+full compliance with the C++20 standard (from 2020). This means GCC
+version 12 is a non-starter. GNU cannot claim compliance with C++20
+(with a straight face) if they don't support std::format .
+So g++ version 13 or later is required. For clang version 16 or later
+is required.
+
 To build:
  $ ./autogen.sh
  $ ./configure

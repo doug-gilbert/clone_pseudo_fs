@@ -98,6 +98,7 @@ C++20 support was chosen because:
 Building package
 ----------------
 Installation instructions are in the INSTALL file.
+Note: g++ version 13 or clang++ version 16 or later versions are required.
 
 Various options can be given to the ./configure script. Those
 specific to this package are:

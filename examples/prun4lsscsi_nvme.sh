@@ -1,10 +1,11 @@
 #!/bin/bash
 
-# Clone /sys and current machine to /tmp/sys suitable for the
+# Clone /sys on the current machine to /tmp/sys suitable for the
 #    lsscsi --sysfsroot=/tmp/sys
 # or
 #    lsscsi --sysroot=/tmp
-# invocation which are equivalent
+# invocations which are equivalent.
+# Alternatively /tmp/sys could be tar-ed up for later inspection.
 
 clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem \
 -p /sys/class/nvme -S

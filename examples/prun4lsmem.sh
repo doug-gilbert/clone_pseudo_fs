@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Clone /sys on the current machine to /tmp/sys suitable for
+#    lsmem --sysroot=/tmp
+# Alternatively /tmp/sys could be tar-ed up for later inspection.
+
+clone_pseudo_fs -p /sys/devices/system/memory -e /sys/bus -E subsystem \
+-E device -S
+
+# remove the -S if statistics are not required.

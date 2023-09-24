@@ -1,0 +1,19 @@
+
+The bash shell scripts in this directory identify what parts of /sys ,
+/proc and /dev that need to be copied to make the various ls* utilities
+work with their --sysroot= (or --sysfsroot= ) option.
+
+Just using clone_pseudo_fs to copy all of /sys and then /proc may
+expose exploitable data if the copied data is placed in a public
+place such as a newsgroup or a web based equivalent. With that in
+mind, the copies of /proc and /sys use the --exclude= , --excl-fn=
+and --prune= options to reduce the amount of data copied.
+
+On the author's laptop the reduction in the number nodes was around
+a factor of 10 or more. More pruning could be done to reduce the
+number of nodes further. The strace utility is a good way of seeing
+exactly which files a ls* utility accesses. For example:
+    strace lsblk >& /tmp/lsblk_strace.txt
+
+Douglas Gilbert
+20230923
