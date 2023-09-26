@@ -13,6 +13,8 @@
 # directory (e.g. /proc/1234 ), the dereference is applied before the
 # exclude
 
+set -x #echo on
+
 clone_pseudo_fs -s /proc/ -d /tmp/proc -e '/proc/[0-9]*' \
 -R /proc/self -w 0 -r 8192
 

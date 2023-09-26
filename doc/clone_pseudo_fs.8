@@ -73,7 +73,7 @@ to a tree based structure held in ram (memory). Each 'node' in that tree
 consumes a little over 120 bytes. The contents of a regular file (see
 \fI\-\-reglen=RLEN\fR) is not copied if this option is given once. If this
 option is given two or more times, the contents of each regular file is
-copies into the memory based tree.
+copied into the memory based tree.
 .br
 A second pass "unrolls" the in\-memory tree representation into the
 destination (i.e. it creates nodes under \fIDPATH\fR).
@@ -81,19 +81,28 @@ destination (i.e. it creates nodes under \fIDPATH\fR).
 The reason for a two pass method is that since \fISPATH\fR is assumed to be
 a pseudo file system, it could be changing rapidly in response to events in
 the system. Since it is not practical to freeze (or lock) a pseudo file
-system while it is cloned, the next best approach is to reduce the time taken
-to scan \fISPATH\fR. As a rough estimation, scanning directories is faster
-than opening files and is definitely faster than creating new files and
-directories.
+system while it is being cloned, the next best approach is to reduce the time
+taken to scan \fISPATH\fR. As a rough estimation, scanning directories is
+faster than opening files and is definitely faster than creating new files
+and directories.
 .TP
 \fB\-R\fR, \fB\-\-dereference\fR=\fISPTSYM\fR
 \fISPTSYM\fR is assumed to be a symbolic link under \fISPATH\fR. During the
 recursive directory scan (of \fISPATH\fR), symbolic links are visited but the
-scan does not 'descend' into the target of the symbolic link even if that
-target is itself a directory. If a symbolic link matches \fISPTSYM\fR then a
-new directory is created in \fIDPATH\fR with the link name of \fISPTSYM\fR
-and this utility descends into \fISPTSYM\fR's target name and copies it. This
-action is sometimes called a 'deep' copy.
+scan does not normally 'descend' into the target of the symbolic link when
+that target is itself a directory. When this option is given then for
+symbolic links that target directories, if the link name matches \fISPTSYM\fR
+then a new directory is created in the output with the link name of
+\fISPTSYM\fR and this utility descends into \fISPTSYM\fR's target name and
+copies it. This action is sometimes called a 'deep' copy.
+.br
+As a convenience, \fISPTSYM\fR may be a symlink to a regular file in which
+case in the output a copy of the regular file will be placed in the current
+directory with the symlink's link name replacing that symlink.
+.br
+If \fISPTSYM\fR targets a node that is neither a directory nor a regular
+file then this option has no effect. If \fISPTSYM\fR is a "dangling" symlink
+then a clone of that dangling symlink will appear in the output.
 .br
 This option may be given many times, any \fISPTSYM\fR that does not match a
 symlink under \fISPATH\fR is discarded, as are duplicates. As soon as a match
@@ -107,6 +116,8 @@ that are subject to "glob" expansion and can match any type of node.
 .br
 The long option \fI\-\-dereference=SPTSYM\fR may be shortened to
 \fI\-\-deref=SPTSYM\fR .
+.br
+For more information see the DEREFERENCE AND EXCLUDE section below.
 .TP
 \fB\-d\fR, \fB\-\-destination\fR=\fIDPATH\fR
 \fIDPATH\fR is the destination of the clone (copy) operation. If it already
@@ -146,6 +157,8 @@ Beware: a trailing slash on \fIPATT\fR is a different glob to the same
 a trailing slash. Note that glob expansion takes place well before the
 scan of \fISPATH\fR starts and any \fIPATT\fR expressions not matching
 file at that time are ignored.
+.br
+For more information see the DEREFERENCE AND EXCLUDE section below.
 .TP
 \fB\-E\fR, \fB\-\-excl\-fn\fR=\fIEFN\fR
 \fIEFN\fR is a filename with no path component (e.g. 'subsystem'). If
@@ -153,10 +166,13 @@ a directory named \fIEFN\fR or a symlink pointing to a directory is
 detected, all nodes below it are excluded. In the case of a symlink
 the comparison is on the link name, not the target name.
 .br
-A directory filename (e.g. 'subsystem') can be matched multiple times.
-This option may be given multiple times and used in conjunction with
-the \fI\-\-exclude=PATT\fR and \fI\-\-prune=PRUN\fR options to reduce
-the size of output written to \fIDPATH\fR.
+Any type of node can be matched multiple times against the same \fIEFN\fR.
+This option may be given multiple times in the same invocation. It can be
+used in conjunction with the \fI\-\-exclude=PATT\fR and \fI\-\-prune=PRUN\fR
+options to reduce the size of output written to \fIDPATH\fR.
+.br
+For more information see the DEREFERENCE AND EXCLUDE and ORDER OF EVALUATION
+sections below.
 .TP
 \fB\-x\fR, \fB\-\-extra\fR
 does some extra sanity checks which may slow down the clone a little.
@@ -221,23 +237,26 @@ multiple file system instances. This option should be used with care as
 different file systems often have different characteristics.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIPRUN\fR
-\fIPRUN\fR should be a path matching a directory under \fISPATH\fR. This
-option can be given multiple times.
+\fIPRUN\fR should be a path matching a directory or a regular file under
+\fISPATH\fR. This option can be given multiple times.
 .br
-All nodes including and below each matched \fIPRUN\fR directory node will
-appear under \fIDPATH\fR (i.e. the output). Below each \fIPRUN\fR
-directory any symlink will be followed to its target directory and the nodes
+All nodes including and below each matched \fIPRUN\fR node will appear under
+\fIDPATH\fR (i.e. the output). Below each \fIPRUN\fR directory node any
+symlink will be followed to its target directory and the nodes
 below that will appear under \fIDPATH\fR. Also the nodes in the canonical
 path between \fISPATH\fR and each matching \fIPRUN\fR (plus each symlink
 target directory) will appear in the output. Any node under \fISPATH\fR
 _not_ mentioned in this paragraph will not appear in the output (i.e.
-under \fIDPATH\fR.
+under \fIDPATH\fR).
 .br
-A simpler way of describing the action of this option is that the output
-will contain a directory matching each \fIPRUN\fR, its children,
-grandchildren, etc. Additionally any symlink amongst those children will
-be followed to its target directory and its children, grandchildren, etc
-will also appear in the output. See the PRUNING section below.
+Another way of describing the action of this option is that the output will
+contain a directory matching each \fIPRUN\fR, its children, grandchildren,
+etc. Additionally any symlink amongst those children will be followed to its
+target directory and its children, grandchildren, etc will also appear in
+the output. Finally any regular file matching \fIPRUN\fR will appear in the
+output.
+.br
+See the PRUNING and ORDER OF EVALUATION sections below.
 .TP
 \fB\-r\fR, \fB\-\-reglen\fR=\fIRLEN\fR
 \fIRLEN\fR is the maximum length. in bytes, that is cloned (copied) from
@@ -307,7 +326,7 @@ invoking poll(2)).
 Additionally using the \fI\-\-verbose\fR option one or more times will
 output the filename (under \fISPATH\fR) of any regular file that times
 out during its read(2).
-.SH SYMBOLIC LINKS AND DIRECTORIES
+.SH "SYMBOLIC LINKS AND DIRECTORIES"
 Most storage file systems have some form of symbolic link (symlink) support.
 The DOS FAT file system does not have symlink support and it is still
 widely used. A bit like a parachute, symlinks are not needed most of the
@@ -328,25 +347,23 @@ copying each entry into the destination. The "ls \-f" command in Linux shows
 the native order in which a directory holds its contents and this is the
 order that this utility uses when cloning.
 .PP
-Symlinks have two parts: its link name and its target name. The target
-name is where it "goes" and that location in the destination may not
-exist for several reasons. The main reason is that the recursive descent
-algorithm may not have reach where the target name points. The other
-reason is changes in the underlying hardware which sysfs (for example)
-is trying to mirror have removed that target name location.
-So\-called "dangling" symlinks need to be created as its target name
-location may be created later in the clone operation. However that is
-not guaranteed. In a changing hardware environment the time between
-when a symlink is created (using its link name) and resolved (i.e.
+Symlinks have two parts: its link name and its target name. The target name
+is where it "goes" and that location in the destination may not exist for
+several reasons. The main reason is that the recursive descent algorithm may
+not have reached where the target name points. The other reason is changes
+in the underlying hardware which sysfs (for example) is trying to mirror have
+removed that target name location. Whatever the reason, so\-called "dangling"
+symlinks are always created. In a changing hardware environment the time
+between when a symlink is created (using its link name) and resolved (i.e.
 when its target name is created) may be measured in seconds, and that
-timespan increases the chance that something has changed.
+timespan increases the chance that something else has changed.
 .PP
 If this is indeed found to be a problem, using the
 \fI\-\-dereference=SPTSYM\fR option to turn that symlink into a directory
 may be considered. As explained above, the "recursive descent" nature of
 the clone operation means that the files under a directory are scanned
 within milliseconds or less after their parent directory is found.
-.SH DEREFERENCE AND EXCLUDE
+.SH "DEREFERENCE AND EXCLUDE"
 These options are designed so that \fI\-\-dereference=SPTSYM\fR is as narrow
 as possible while \fI\-\-exclude=PATT\fR is as broad as possible. The former
 increases the size of the clone which will slow the clone operation down.
@@ -413,14 +430,32 @@ that symlinks may still be dangling due to exclusions or pointing
 outside or to another pseudo file system.
 .PP
 The third pass only outputs nodes that have been marked.
-.SH "ORDER OF OPERATIONS"
+.SH "ORDER OF EVALUATION"
 First command line options are processed. This includes doing "glob" (or
 file) expansions for the \fI\-\-exclude=PATT\fR option.
 .PP
-As a general rule the dereference option is applied first, followed by
+As a general rule, during the recursive scan (descent) of \fISPATH\fR at
+each node the dereference option is applied first, followed by
 exclude (both \fI\-\-exclude=PATT\fR and \fI\-\-excl\-fn=EFN\fR options)
-and finally prune the option is applied.
-.SH CLONING SYSFS
+and finally the prune option is evaluated.
+.PP
+There is a difference in the way \fI\-\-exclude=PATT\fR and
+\fI\-\-excl\-fn=EFN\fR are evaluated. The \fIPATT\fR argument is turned
+into a list of matching node paths before the scan commences. By the
+time the scan reaches that part of the hierarchial tree, that node may
+have been removed. This happens often in procfs with this option:
+    \-\-exclude='/proc/[0-9]*'
+which is trying to exclude all PIDs (process IDs). A few may be found in
+the output, representing the processes that were created after the glob
+expansion of \fIPATT\fR and before the scan reached that part of the
+hierarchial tree. To improve performance, whenever an element from the
+list of matching node paths is matched, that element is removed from the
+list.
+.PP
+On the other hand, for the \fI\-\-excl\-fn=EFN\fR option, a list of
+filenames is generated during command line processing, one list entry
+for each \fI\-\-excl\-fn=EFN\fR option appearing on the command line.
+.SH "CLONING SYSFS"
 An instance of the sysfs file pseudo file system is typically mounted under
 the /sys directory in Linux. So many utilities and tools like systemd
 expect sysfs in that location that Linux would probably be inoperable if
@@ -439,7 +474,7 @@ It seems that all the symlink targets in sysfs stay within sysfs.
 Counter\-examples? The other pseudo file systems listed below have symlink
 targets outside their file system. For example /proc/self/root is a symlink
 which usually targets '/' .
-.SH CLONING PROCFS
+.SH "CLONING PROCFS"
 The pseudo file system called procfs is typically mounted under /proc and
 primarily contains directories named for the Process Identifiers (PIDs)
 currently running in the host machine. It also contains "other stuff" some
@@ -466,7 +501,7 @@ One problematic file is /proc/kmsg which is a "waiting" read. This can
 be handled with the \fI\-\-wait=MS_R\fR option. In testing \-\-wait=0
 seems to be sufficient. The /proc/kmsg file needs root permissions to read
 so if this utility is run as a non\-root user, that problem disappears.
-.SH CLONING DEVFS
+.SH "CLONING DEVFS"
 A file system called "devfs" was removed a long time ago in Linux and
 replaced by the devtmpfs file system which is typically controlled by the
 udevd daemon. For simplicity the name "devfs" will be used here to describe

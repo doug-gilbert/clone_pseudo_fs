@@ -4,6 +4,8 @@
 #    lscpu --sysroot=/tmp
 # Alternatively /tmp/sys could be tar-ed up for later inspection.
 
+set -x #echo on
+
 clone_pseudo_fs -p /sys/devices/system/cpu -E subsystem -E device -S
 
 # remove the -S if statistics are not required.

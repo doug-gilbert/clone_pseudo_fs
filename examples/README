@@ -1,6 +1,6 @@
 
 The bash shell scripts in this directory identify what parts of /sys ,
-/proc and /dev that need to be copied to make the various ls* utilities
+/proc and /dev need to be copied to make the various ls* utilities
 work with their --sysroot= (or --sysfsroot= ) option.
 
 Just using clone_pseudo_fs to copy all of /sys and then /proc may
