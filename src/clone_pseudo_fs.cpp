@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20230925 [svn: r16]";
+static const char * const version_str = "0.90 20231002 [svn: r17]";
 
 #include <iostream>
 #include <fstream>
@@ -148,9 +148,9 @@ struct inmem_base_t {
                 : filename(fn), shstat(a_shstat),
                   par_dir_ind(a_par_dir_ind) { }
 
-    // Note that filename is just a filename, it is not a path. All files
-    // and directories have a non-empty filename with one exception: the
-    // clone root (i.e. SPATH itself) has an empty filename.
+    // Note that filename is just a filename, it does not have a path. All
+    // nodes (regular, directory, symlink and special files) have
+    // non-empty filenames.
     sstring filename { };  // link name if symlink
 
     struct short_stat shstat { };
@@ -168,6 +168,8 @@ struct inmem_base_t {
 
     // damn stupid compiler, prune_mask_e is defined as a unit8_t enum
     mutable uint8_t prune_mask { }; // used when op->prune_given is true
+
+    uint8_t is_root { };
 
     void debug_base(const sstring & intro = "") const noexcept;
 };
@@ -280,7 +282,7 @@ struct inmem_dir_t : inmem_base_t {
     std::shared_ptr<inmem_subdirs_t> sdirs_sp;
 
     // directory absolute path: par_pt_s + '/' + get_filename()
-    sstring par_pt_s { };
+    sstring par_pt_s { };  // empty in one case: when root directory: '/'
 
     int depth { -3 };   // purposely invalid. SPATH root has depth=-1
 
@@ -358,11 +360,13 @@ enum class inmem_var_e {
     var_regular,
 };
 
+// Use "node" for an instance of any file type
 struct stats_t {
-    unsigned int num_node;      /* should be all valid file types */
+    unsigned int num_node;      /* accessed in the source scan (pass 1) */
     unsigned int num_dir;       /* directories that are not symlinks */
     unsigned int num_sym2dir;
     unsigned int num_sym2reg;
+    unsigned int num_sym2sym;
     unsigned int num_sym2block;
     unsigned int num_sym2char;
     unsigned int num_sym_other;
@@ -422,6 +426,9 @@ struct stats_t {
 };
 
 struct mut_opts_t {
+    bool prune_take_all { };    // for '--src=/sys --prune=/sys'
+    bool clone_work_subseq { };
+    bool cache_src_subseq { };
     size_t starting_src_sz { };
     dev_t starting_fs_inst { };
     inmem_dir_t * cache_rt_dirp { };
@@ -459,7 +466,7 @@ struct opts_t {
     const char * dst_cli;   // destination given on command line
     const char * src_cli;   // source given on command line
     struct mut_opts_t * mutp;
-    fs::path source_pt;         // a directory in canonical form
+    fs::path source_pt;         // src root directory in absolute form
     fs::path destination_pt;    // (will be) a directory in canonical form
     std::shared_ptr<uint8_t[]> reg_buff_sp;
     std::vector<sstring> cl_exclude_v;  // command line --exclude arguments
@@ -499,7 +506,7 @@ static const struct option long_options[] {
     {0, 0, 0, 0},
 };
 
-static const sstring sysfs_root { "/sys" };   // default source
+static const sstring sysfs_root { "/sys" };   // default source (normalized)
 static const sstring def_destin_root { "/tmp/sys" };
 static const int stat_perm_mask { 0x1ff };         /* bottom 9 bits */
 static const int def_file_perm { S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH };
@@ -507,12 +514,15 @@ static const char * symlink_src_tgt { "0_symlink_source_target" };
 
 static const auto dir_opt { fs::directory_options::skip_permission_denied };
 
-static std::error_code clone_work(int dc_depth, const fs::path & src_pt,
+static std::error_code clone_work(const fs::path & src_pt,
                                   const fs::path & dst_pt,
                                   const struct opts_t * op) noexcept;
 static std::error_code cache_src(int dc_depth, inmem_dir_t * odirp,
                                  const fs::path & src_pt,
                                  const struct opts_t * op) noexcept;
+static void prune_prop_dir(const inmem_dir_t * a_dirp,
+                           const sstring & s_par_pt_s,
+                           bool in_prune, const struct opts_t * op) noexcept;
 
 /**
  * @param v - sorted vector instance
@@ -1344,7 +1354,7 @@ xfr_other_ft(fs::file_type ft, const fs::path & src_pt,
                s(src_pt), l());
         break;              // skip these file types
     default:                // here when something no longer exists
-        pr_err(3, "unexpected file_type=%d{}\n", static_cast<int>(ft),
+        pr_err(3, "unexpected file_type={}{}\n", static_cast<int>(ft),
                l());
         break;
     }
@@ -1424,6 +1434,7 @@ show_stats(const struct opts_t * op) noexcept
     scout << "Number of symlinks to directories: " << q->num_sym2dir << "\n";
     scout << "Number of symlinks to regular files: " << q->num_sym2reg
           << "\n";
+    scout << "Number of symlinks to symlinks: " << q->num_sym2sym << "\n";
     if (extra) {
         scout << "Number of symlinks to block device nodes: "
               << q->num_sym2block << "\n";
@@ -1560,18 +1571,32 @@ read_symlink(const fs::path & pt, const struct opts_t * op,
             ++q->num_sym_s_enoent;
         else
             ++q->num_sym_s_dangle;
+        return target_pt;
     }
-    pr_err(5, "target path returned by read_symlink(): {}{}\n", s(target_pt),
-           l(ec));
+
+    if (op->want_stats > 0) {
+        const fs::path join_pt { pt.parent_path() / target_pt };
+
+        if (fs::symlink_status(join_pt, ec).type() == fs::file_type::symlink)
+            ++q->num_sym2sym;
+        else if (ec)
+            pr_err(2, "{}: read_symlink({}) sym2sym failed{}\n", s(pt),
+                   s(target_pt), l(ec));
+        ec.clear();
+    }
+    pr_err(5, "{}: link pt: {}, target pt: {}{}\n", __func__, s(pt),
+           s(target_pt), l(ec));
+    pr_err(6, "   lexically_normal target pt: {}\n",
+           s(target_pt.lexically_normal()));
     return target_pt;
 }
 
 // Returns pair <error_code ec, bool serious>. If ec is true (holds error)
 // caller should only consider it serious if that (second) flag is true.
 static std::pair<std::error_code, bool>
-symlink_clone_work(int dc_depth, const fs::path & pt,
-                   const fs::path & prox_pt, const fs::path & ongoing_d_pt,
-                   bool deref_entry, const struct opts_t * op) noexcept
+symlink_clone_work(const fs::path & pt, const fs::path & prox_pt,
+                   const fs::path & ongoing_d_pt, bool deref_entry,
+                   const struct opts_t * op) noexcept
 {
     std::error_code ec { };
     struct stats_t * q { &op->mutp->stats };
@@ -1645,14 +1670,6 @@ symlink_clone_work(int dc_depth, const fs::path & pt,
                 return {ec, false};
             }
             const fs::path deep_d_pt { ongoing_d_pt / d_lnk_pt };
-
-            if (op->max_depth_active && (dc_depth >= op->max_depth)) {
-                pr_err(-1, "{}: hits max_depth={}, don't enter {}{}\n",
-                       __func__, dc_depth, s(canon_s_sl_targ_pt), l());
-                ++q->num_error;
-                ec.assign(ELOOP, std::system_category());
-                return {ec, false};
-            }
             const auto d_sl_tgt { d_lnk_pt / symlink_src_tgt };
             const auto ctspt { s(canon_s_sl_targ_pt) + "\n" };
             const char * ccp { ctspt.c_str() };
@@ -1666,9 +1683,7 @@ symlink_clone_work(int dc_depth, const fs::path & pt,
                        l(ec));
                 ++q->num_error;
             }
-            ++dc_depth;
-            ec = clone_work(dc_depth, canon_s_sl_targ_pt, deep_d_pt, op);
-            --dc_depth;
+            ec = clone_work(canon_s_sl_targ_pt, deep_d_pt, op);
             if (ec) {
                 pr_err(-1, "{}: clone_work() failed{}\n",
                        s(canon_s_sl_targ_pt), l(ec));
@@ -1713,9 +1728,8 @@ process_as_symlink:
 }
 
 static void
-dir_clone_work(int dc_depth, const fs::path & pt,
-               fs::recursive_directory_iterator & itr, dev_t st_dev,
-               fs::perms s_perms, const fs::path & ongoing_d_pt,
+dir_clone_work(const fs::path & pt, fs::recursive_directory_iterator & itr,
+               dev_t st_dev, fs::perms s_perms, const fs::path & ongoing_d_pt,
                const struct opts_t * op, std::error_code & ec) noexcept
 {
     struct stats_t * q { &op->mutp->stats };
@@ -1728,11 +1742,6 @@ dir_clone_work(int dc_depth, const fs::path & pt,
             itr.disable_recursion_pending();
             ++q->num_oth_fs_skipped;
         }
-    }
-    if (op->max_depth_active && (dc_depth >= op->max_depth)) {
-        pr_err(2, "Source at max_depth and this is a directory: {}, don't "
-               "enter\n", s(pt));
-        itr.disable_recursion_pending();
     }
     if (! op->destin_all_new) { /* may already exist */
         if (fs::exists(ongoing_d_pt, ec)) {
@@ -1791,7 +1800,7 @@ dir_clone_work(int dc_depth, const fs::path & pt,
 // and may cause processing of the currently node to be stopped and
 // processing will continue to the next node.
 static std::error_code
-clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
+clone_work(const fs::path & src_pt, const fs::path & dst_pt,
            const struct opts_t * op) noexcept
 {
     struct mut_opts_t * omutp { op->mutp };
@@ -1802,8 +1811,9 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
     struct stat src_stat;
     std::error_code ecc { };
 
-    if (dc_depth > 0) {
-        // Check (when dc_depth > 0) whether src_pt is a directory
+    if (! omutp->clone_work_subseq)
+        omutp->clone_work_subseq = true;
+    else {      // not first call but all after
         if (op->do_extra) {
             bool src_pt_contained { path_contains_canon(op->source_pt,
                                                         src_pt) };
@@ -1825,11 +1835,10 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                 bad = true;
             }
             if (op->no_destin)
-                pr_err(0, "{}: dc_depth={}, src_pt: {}\n", __func__,
-                       dc_depth, s(src_pt));
+                pr_err(0, "{}: src_pt: {}\n", __func__, s(src_pt));
             else
-                pr_err(0, "{}: dc_depth={}, src_pt: {}, dst_pt: {}\n",
-                       __func__, dc_depth, s(src_pt), s(dst_pt));
+                pr_err(0, "{}: src_pt: {}, dst_pt: {}\n", __func__,
+                       s(src_pt), s(dst_pt));
             if (bad) {
                 ecc.assign(EDOM, std::system_category());
                 return ecc;
@@ -1873,12 +1882,6 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
 
         ++q->num_node;
         pr_err(6, "{}: about to scan this source entry{}\n", s(pt), l());
-        const auto itr_status { itr->status(ec) };
-        if (ec) {
-            pr_err(4, "itr->status({}) failed, continue{}\n", s(pt), l(ec));
-            ++q->num_error;
-            continue;
-        }
         const auto s_sym_ftype = itr->symlink_status(ec).type();
         if (ec) {       // serious error
             ++q->num_error;
@@ -1887,30 +1890,26 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
             // thought of using entry.refresh(ec) but no speed improvement
             continue;
         }
+        const auto itr_status { itr->status(ec) };
+        fs::file_type s_ftype { fs::file_type::none };
+        if (ec) {
+            if (s_sym_ftype == fs::file_type::symlink)
+                ++q->num_sym_s_dangle;
+            else
+                ++q->num_error;
+            pr_err(4, "itr->status({}) failed, continue{}\n", s(pt), l(ec));
+            // continue;
+        } else
+            s_ftype = itr_status.type();
+
         if (depth > q->max_depth)
             q->max_depth = depth;
-        fs::file_type s_ftype { fs::file_type::none };
-
-        if (itr->exists(ec)) {
-            s_ftype = itr_status.type();
-            // this conditional is a sanity check, may be overkill
-            if (op->do_extra > 0) {
-                if ((s_sym_ftype == fs::file_type::symlink) &&
-                    (! path_contains_canon(src_pt, pt))) {
-                    pr_err(-1, "{} is not contained in source root {}{}\n",
-                           s(pt), s(src_pt), l());
-                    break;
-                }
-            }
-        } else {
-            // expect s_sym_ftype to be symlink, so dangling target
-            if (ec) {
-                ++q->num_error;
-                pr_err(4, "itr->exists({}) failed, continue{}\n", s(pt),
-                       l(ec));
-            } else
-                pr_err(1, "{}: does not exist, continue\n", s(pt), l());
-            continue;
+        if (op->max_depth_active &&
+            (s_sym_ftype == fs::file_type::directory) &&
+            (depth >= op->max_depth)) {
+            pr_err(2, "Source at max_depth and this is a directory: {}, "
+                   "don't enter\n", s(pt));
+            itr.disable_recursion_pending();
         }
 
         const bool hidden_entry = ((! pt.empty()) &&
@@ -1963,10 +1962,7 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                     ++q->num_sym_s_dangle;
                     continue;
                 }
-                ++dc_depth;
-                ecc = clone_work(dc_depth, canon_s_sl_targ_pt, "",
-                                 op);
-                --dc_depth;
+                ecc = clone_work(canon_s_sl_targ_pt, "", op);
                 if (ecc) {
                     pr_err(-1, "clone_work({}) failed{}\n",
                            s(canon_s_sl_targ_pt), l(ecc));
@@ -2016,20 +2012,20 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                 itr.disable_recursion_pending();
                 continue;
             }
-            dir_clone_work(dc_depth, pt, itr, src_stat.st_dev,
+            dir_clone_work(pt, itr, src_stat.st_dev,
                            itr_status.permissions(), ongoing_d_pt, op, ec);
             break;
         case symlink:
             {
                 if (exclude_entry)
                     break;
-                const fs::path pt_parent_pt { pt.parent_path() };
+                const fs::path parent_pt { pt.parent_path() };
                 fs::path prox_pt { dst_pt };
-                if (pt_parent_pt != src_pt) {
-                    prox_pt /= fs::proximate(pt_parent_pt, src_pt, ec);
+                if (parent_pt != src_pt) {
+                    prox_pt /= fs::proximate(parent_pt, src_pt, ec);
                     if (ec) {
                         pr_err(-1, "symlink: proximate({}) failed{}\n",
-                               s(pt_parent_pt), l(ec));
+                               s(parent_pt), l(ec));
                         ++q->num_error;
                         break;
                     }
@@ -2037,7 +2033,7 @@ clone_work(int dc_depth, const fs::path & src_pt, const fs::path & dst_pt,
                 bool serious;
 
                 std::tie(ec, serious) =
-                        symlink_clone_work(dc_depth, pt, prox_pt, ongoing_d_pt,
+                        symlink_clone_work(pt, prox_pt, ongoing_d_pt,
                                            deref_entry, op);
                 if (serious)
                     return ec;
@@ -2120,10 +2116,10 @@ cache_reg(inmem_dir_t * l_odirp, const short_stat & a_shstat,
 // Returns pair <error_code ec, bool serious>. If ec is true (holds error)
 // caller should only consider it serious if that (second) flag is true.
 static std::pair<std::error_code, bool>
-symlink_cache_work(int dc_depth, const fs::path & pt,
-                   const short_stat & a_shstat, inmem_dir_t * & l_odirp,
-                   inmem_dir_t * prev_odirp, bool deref_entry,
-                   const struct opts_t * op) noexcept
+symlink_cache_src(int dc_depth, const fs::path & pt,
+                  const short_stat & a_shstat, inmem_dir_t * & l_odirp,
+                  inmem_dir_t * prev_odirp, bool deref_entry,
+                  bool got_prune_exact, const struct opts_t * op) noexcept
 {
     std::error_code ec { };
     struct stats_t * q { &op->mutp->stats };
@@ -2135,6 +2131,10 @@ symlink_cache_work(int dc_depth, const fs::path & pt,
         return {ec, false};
     inmem_symlink_t a_sym(filename_pt, a_shstat);
     a_sym.target = target_pt;
+    if (got_prune_exact) {
+        a_sym.prune_mask |= prune_exact;
+        ++q->num_prune_exact;
+    }
     if (deref_entry) {   /* symlink becomes directory */
         const fs::path canon_s_targ_pt
                         { fs::canonical(par_pt / target_pt, ec) };
@@ -2213,18 +2213,19 @@ cache_recalc_grandparent(const fs::path & par_pt,
     ec.clear();
     const std::vector<sstring> vs { split_path(par_pt, osrc_pt, op, ec) };
     if (ec) {
-        pr_err(-1, "split_path({}) failed{}\n", s(par_pt), l(ec));
+        pr_err(-1, "{}: split_path({}) failed{}\n", __func__, s(par_pt),
+               l(ec));
         return false;
     }
     // when depth reduces > 1, don't trust pointers any more
     // l_odirp = omutp->cache_rt_dirp;
     l_odirp = odirp;
-    const auto it_end { l_odirp->sdirs_sp->sdir_fn_ind_m.end() };
 
     for (const auto & ss : vs) {
-        const auto it { l_odirp->sdirs_sp->sdir_fn_ind_m.find(ss) };
+        const auto & mm { l_odirp->sdirs_sp->sdir_fn_ind_m };
+        const auto it { mm.find(ss) };
 
-        if (it == it_end) {
+        if (it == mm.end()) {
             ec.assign(ENOENT, std::system_category());
             pr_err(1, "{} {}: unable to find that sub-path{}\n", s(par_pt),
                    ss, l());
@@ -2247,19 +2248,21 @@ cache_recalc_grandparent(const fs::path & par_pt,
 // This function will mark all nodes from par_pt to osrc_pt with the
 // prune_up_chain unless nodes are already marked. Similar algorithm
 // to the cache_recalc_grandparent function. Returns true on success.
-static inmem_dir_t *
+static std::pair<inmem_dir_t *, inmem_regular_t *>
 prune_mark_up_chain(const fs::path & par_pt, const struct opts_t * op,
                     std::error_code & ec) noexcept
 {
     inmem_dir_t * l_odirp { };
     struct stats_t * q { &op->mutp->stats };
+    std::pair<inmem_dir_t *, inmem_regular_t *> res { };
     const fs::path & osrc_pt { op->source_pt };
 
     ec.clear();
     const std::vector<sstring> vs { split_path(par_pt, osrc_pt, op, ec) };
     if (ec) {
-        pr_err(-1, "split_path({}) failed{}\n", s(par_pt), l(ec));
-        return nullptr;
+        pr_err(-1, "{}: split_path({}) failed{}\n", __func__, s(par_pt),
+               l(ec));
+        return res;     // pair of nullptr_s
     }
     // when depth reduces > 1, don't trust pointers any more
     // l_odirp = omutp->cache_rt_dirp;
@@ -2268,25 +2271,32 @@ prune_mark_up_chain(const fs::path & par_pt, const struct opts_t * op,
         l_odirp->prune_mask |= prune_up_chain;
         ++q->num_pruned_node;
     }
-    const auto it_end { l_odirp->sdirs_sp->sdir_fn_ind_m.end() };
-
     // step down hierarchy from source root
     for (const auto & ss : vs) {
-        const auto it { l_odirp->sdirs_sp->sdir_fn_ind_m.find(ss) };
+        const auto & mm { l_odirp->sdirs_sp->sdir_fn_ind_m };
+        const auto it { mm.find(ss) };
 
-        if (it == it_end) {
+        if (it == mm.end()) {   // not there, or not a directory
+            for (auto & sub : l_odirp->sdirs_sp->sdir_v) {
+                if (sub.get_filename() == ss) {
+                    res.second = std::get_if<inmem_regular_t>(&sub);
+                    if (res.second)
+                        return res;
+                }
+            }
             ec.assign(ENOENT, std::system_category());
-            pr_err(1, "path: {}, component: {} not found{}\n", s(par_pt), ss,
-                   l());
-            return nullptr;
+            pr_err(1, "{}: path: {}, component: {} not found{}\n", __func__,
+                   s(par_pt), ss, l());
+            return res;         // pair of nullptr_s
         }
         inmem_t * childp { &l_odirp->sdirs_sp->sdir_v[it->second] };
+
         l_odirp = std::get_if<inmem_dir_t>(childp);
         if (l_odirp == nullptr) {
             ec.assign(ENOTDIR, std::system_category());
             pr_err(0, "node: {} was not sub-directory in: {}{}\n", ss,
                    s(par_pt), l());
-            return nullptr;
+            return res;
         }
         inmem_base_t * ibp = childp->get_basep();
         if (ibp->prune_mask == 0) {
@@ -2294,7 +2304,8 @@ prune_mark_up_chain(const fs::path & par_pt, const struct opts_t * op,
             ++q->num_pruned_node;
         }
     }
-    return l_odirp;
+    res.first = l_odirp;
+    return res;
 }
 
 static std::error_code
@@ -2302,13 +2313,14 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
           const struct opts_t * op) noexcept
 {
     struct mut_opts_t * omutp { op->mutp };
+    bool cache_src_first = ! omutp->cache_src_subseq;
     bool possible_exclude
-                { (dc_depth == 0) && (! omutp->glob_exclude_v.empty()) };
+                { cache_src_first && (! omutp->glob_exclude_v.empty()) };
     bool possible_excl_fn { ! op->excl_fn_v.empty() };
-    bool possible_deref { (dc_depth == 0) && (! omutp->deref_v.empty()) };
-    bool possible_prune { (dc_depth == 0) && (! omutp->prune_v.empty()) };
+    bool possible_deref { cache_src_first && (! omutp->deref_v.empty()) };
+    bool possible_prune { cache_src_first && (! omutp->prune_v.empty()) };
     int depth;
-    int prev_depth { dc_depth - 1 };    // assume descendind into directory
+    int prev_depth { -1 };    // assume descending into directory
     int prev_dir_ind { -1 };
     inmem_dir_t * l_odirp { odirp };
     inmem_dir_t * prev_odirp { };
@@ -2321,7 +2333,7 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
         ecc.assign(EINVAL, std::system_category());
         return ecc;
     }
-    if (dc_depth > 0) {
+    if (omutp->cache_src_subseq) {
         // Check (when dc_depth > 0) whether osrc_pt is a directory
         if (op->do_extra) {
             bool src_pt_contained { path_contains_canon(op->source_pt,
@@ -2335,6 +2347,19 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
             }
         }
         /* assume osrc_pt is a directory */
+    } else {
+        omutp->cache_src_subseq = true;
+
+        if (possible_prune) {        // for prune on root node
+            bool rt_prune_exact { };
+
+            std::tie(rt_prune_exact, possible_prune) =
+                    find_in_sorted_vec(omutp->prune_v, op->source_pt, true);
+            if (rt_prune_exact) {
+                omutp->prune_take_all = true;
+                ++q->num_prune_exact;
+            }
+        }
     }
 
     const fs::recursive_directory_iterator end_itr { };
@@ -2373,10 +2398,9 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
             if (prev_dir_ind >= 0) {
                 l_odirp = std::get_if<inmem_dir_t>(
                         &l_odirp->sdirs_sp->sdir_v[prev_dir_ind]);
-            } else {
-                pr_err(5, "{}: probably source root (if blank){}\n",
-                       l_odirp->filename, l());
-            }
+            } else
+                pr_err(5, "{}: probably source root because blank: {}{}\n",
+                       __func__, l_odirp->filename, l());
         } else if (depth < prev_depth) {   // should never occur on first iter
             if (depth == (prev_depth - 1) && prev_odirp) {
                 l_odirp = prev_odirp;   // short cut if backing up one
@@ -2400,7 +2424,11 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
         pr_err(6, "about to scan this source entry: {}{}\n", s(pt), l());
         if (depth > q->max_depth)
             q->max_depth = depth;
-
+        if (op->max_depth_active && l_isdir && (depth >= op->max_depth)) {
+            pr_err(2, "Source: {} at max_depth: {}, don't enter\n",
+                   s(pt), depth);
+            itr.disable_recursion_pending();
+        }
         struct stat a_stat;
 
         if (lstat(pt.c_str(), &a_stat) < 0) {
@@ -2409,15 +2437,20 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
             ++q->num_error;
             continue;
         }
+        bool is_symlink { (a_stat.st_mode & S_IFMT) == S_IFLNK };
         a_shstat.st_dev = a_stat.st_dev;
         a_shstat.st_mode = a_stat.st_mode;
-        // memcpy(&a_inm.shstat, &a_stat, short_stat_cp_sz);
-        const auto s_ftype { itr->status(ec).type() };
+        auto s_ftype { itr->status(ec).type() };
         if (ec) {
-            ++q->num_error;
-            pr_err(2, "itr->status({}) failed, continue{}\n", s(pt),
-                   l(ec));
-            continue;
+            if (is_symlink && (ec.value() == ENOENT)) {
+                s_ftype = fs::file_type::none;
+                ++q->num_sym_s_dangle;
+            } else {
+                ++q->num_error;
+                pr_err(2, "itr->status({}) failed, continue{}\n", s(pt),
+                       l(ec));
+                continue;
+            }
         }
 
         const bool hidden_entry { ((! pt.empty()) && (filename[0] == '.')) };
@@ -2451,6 +2484,7 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
             }
         }
         if (possible_prune && ((s_sym_ftype == fs::file_type::directory) ||
+                               (s_sym_ftype == fs::file_type::symlink) ||
                                (s_sym_ftype == fs::file_type::regular))) {
             bool prune_entry { };
 
@@ -2498,9 +2532,11 @@ cache_src(int dc_depth, inmem_dir_t * odirp, const fs::path & osrc_pt,
         case symlink:
             {
                 bool serious { };
+
                 std::tie(ec, serious) =
-                    symlink_cache_work(dc_depth, pt, a_shstat, l_odirp,
-                                       prev_odirp, deref_entry, op);
+                    symlink_cache_src(dc_depth, pt, a_shstat, l_odirp,
+                                      prev_odirp, deref_entry,
+                                      got_prune_exact, op);
                 if (serious)
                     return ec;
             }
@@ -2678,6 +2714,7 @@ show_cache(const inmem_t & a_nod, bool recurse,
     pr_err(-1, "<< directory: {}/{}, depth={} >>\n", dirp->par_pt_s,
            dirp->filename, dirp->depth);
     pr_err(3, "    &inmem_t: {:p}\n", (void *)&a_nod);
+    a_nod.debug();
 
     for (const auto & subd : dirp->sdirs_sp->sdir_v) {
         const auto * cdirp { std::get_if<inmem_dir_t>(&subd) };
@@ -2702,12 +2739,13 @@ show_cache(const inmem_t & a_nod, bool recurse,
 
 // Transforms a source path to the corresponding destination path
 static sstring
-tranform_src_pt2dst(const sstring & src_pt, const struct opts_t * op) noexcept
+transform_src_pt2dst(const sstring & src_pt_s,
+                     const struct opts_t * op) noexcept
 {
-    if (src_pt.size() < op->mutp->starting_src_sz)
+    if (src_pt_s.size() < op->mutp->starting_src_sz)
         return "";
     return op->destination_pt.string() +
-           sstring(src_pt.begin() + op->mutp->starting_src_sz, src_pt.end());
+       sstring(src_pt_s.begin() + op->mutp->starting_src_sz, src_pt_s.end());
 }
 
 static std::error_code
@@ -2791,8 +2829,8 @@ unroll_cache_is_dir(const sstring & dst_pt_s, const inmem_dir_t * dirp,
     if (! fs::create_directory(dst_pt_s, ec)) {
         if (ec) {
             ++q->num_dir_d_fail;
-            pr_err(1, "create_directory({}), depth={} failed{}\n",
-                   dst_pt_s, dirp->depth, l(ec));
+            pr_err(1, "{}: create_directory({}), depth={} failed{}\n",
+                   __func__, dst_pt_s, dirp->depth, l(ec));
         } else if (dst_pt_s != op->destination_pt) {
             ++q->num_dir_d_exists;
             pr_err(2, "{}, depth={}: exists so create_directory() ignored\n",
@@ -2804,16 +2842,21 @@ unroll_cache_is_dir(const sstring & dst_pt_s, const inmem_dir_t * dirp,
 }
 
 // Unroll cache into the destination. This function calls itself recursively.
+// This is the last pass (second or third) when the --cache or --prune=
+// option is used.
 static std::error_code
 unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
              const struct opts_t * op) noexcept
 {
     std::error_code ec { };
 
-    sstring src_dir_pt_s { s_par_pt_s };
-    if (! a_nod.get_filename().empty())
-        src_dir_pt_s += '/' + a_nod.get_filename();
-    sstring dst_dir_pt_s { tranform_src_pt2dst(src_dir_pt_s, op) };
+    const auto sz { s_par_pt_s.size() };
+    const fs::path src_dir_pt { ((sz == 1) && (s_par_pt_s[0] == '/'))
+                                ? '/' + a_nod.get_filename()
+                                : s_par_pt_s + '/' + a_nod.get_filename() };
+    // following suppresses nuisance '/'is such as in '//sys'
+    sstring src_dir_pt_s { src_dir_pt.lexically_normal() };
+    sstring dst_dir_pt_s { transform_src_pt2dst(src_dir_pt_s, op) };
     if (op->prune_given && (a_nod.get_basep()->prune_mask == 0)) {
         pr_err(6, "leaving unroll_cache({}){}\n", s(src_dir_pt_s), l());
         return ec;
@@ -2852,25 +2895,76 @@ unroll_cache(const inmem_t & a_nod, const sstring & s_par_pt_s, bool recurse,
     return ec;
 }
 
-// propagate prune marks out from the prune_exact marks that were
-// set in the first pass. This is the second pass.
-// Expects a_nod to be a directory.
-static void
-propagate_prune(const inmem_t & a_nod, const sstring & s_par_pt_s,
-                bool in_prune, const struct opts_t * op) noexcept
+// Process symlink whose target is a directory or regular file during pass 2.
+// Returns true for success or false for skip this symlink and process next.
+static bool
+prune_prop_symlink(const inmem_symlink_t * csymp,
+                   const sstring & src_dir_pt_s,
+                   const struct opts_t * op) noexcept
 {
     std::error_code ec { };
     struct stats_t * q { &op->mutp->stats };
-    const inmem_base_t * ibp = a_nod.get_basep();
-    sstring src_dir_pt_s { s_par_pt_s };
-    if (! a_nod.get_filename().empty())
-        src_dir_pt_s += '/' + a_nod.get_filename();
+
+    fs::path target = csymp->target;
+    if (target.is_relative())
+        target = fs::path(src_dir_pt_s) / target;
+    // target = target.lexically_normal();
+    fs::path target_c = fs::canonical(target, ec);
+    if (ec) {
+        pr_err(1, "prune bad symlink target path: {}{}\n", s(target), l(ec));
+        ++q->num_prune_sym_pt_err;
+        return false;
+    }
+    if (path_contains_canon(op->source_pt, target_c)) {
+        bool at_src_rt { };
+        inmem_dir_t * l_odirp { op->mutp->cache_rt_dirp };
+        fs::path p_target { target_c.parent_path() };
+        std::pair<inmem_dir_t *, inmem_regular_t *> res { };
+
+        if (op->source_pt == target_c) {   // this is ugly
+            at_src_rt = true;
+            pr_err(0, "{}: symlink target is source root, ignore\n",
+                   __func__);
+        } else {
+            res = prune_mark_up_chain(target_c, op, ec);
+            if (ec) {
+                ++q->num_prune_sym_pt_err;
+                return false;
+            }
+        }
+        if (res.second) {       // symlink -> regular file
+            res.second->prune_mask |= prune_all_below;
+            return true;
+        }
+        l_odirp = res.first;
+        if (l_odirp) {          // symlink -> directory
+            if ((l_odirp->prune_mask & prune_all_below) || at_src_rt)
+                return false;
+            prune_prop_dir(l_odirp, p_target, true, op);
+            return true;
+        }
+    } else {
+        ++q->num_prune_sym_outside;
+        pr_err(1, "prune symlink target path: {} outside SPATH{}\n",
+               s(target_c), l());
+    }
+    return false;
+}
+
+// Process regular file during pass 2.
+static void
+prune_prop_reg(const inmem_regular_t * a_regp, const sstring & s_par_pt_s,
+               bool in_prune, const struct opts_t * op) noexcept
+{
+    // bool start_in_prune { };
+    std::error_code ec { };
+    struct stats_t * q { &op->mutp->stats };
 
     if (in_prune) {
-        if (ibp->prune_mask & prune_all_below)
+        if (a_regp->prune_mask & prune_all_below)
             return;
-        else if (ibp->prune_mask & prune_up_chain)
-            ibp->prune_mask &= ~prune_up_chain;
+        if (a_regp->prune_mask & prune_up_chain)
+            a_regp->prune_mask &= ~prune_up_chain;
         else {
             prune_mark_up_chain(s_par_pt_s, op, ec);
             if (ec) {
@@ -2879,11 +2973,11 @@ propagate_prune(const inmem_t & a_nod, const sstring & s_par_pt_s,
             }
         }
         ++q->num_pruned_node;
-        ibp->prune_mask |= prune_all_below;
+        a_regp->prune_mask |= prune_all_below;
     } else {
-        if (ibp->prune_mask & prune_exact) {
+        if (a_regp->prune_mask & prune_exact) {
             in_prune = true;
-            ibp->prune_mask |= prune_all_below;
+            a_regp->prune_mask |= prune_all_below;
             ++q->num_pruned_node;
             prune_mark_up_chain(s_par_pt_s, op, ec);
             if (ec) {
@@ -2892,73 +2986,108 @@ propagate_prune(const inmem_t & a_nod, const sstring & s_par_pt_s,
             }
         }
     }
-    if (const inmem_dir_t * dirp { std::get_if<inmem_dir_t>(&a_nod) }) {
-
-        for (auto & subd : dirp->sdirs_sp->sdir_v) {
-            inmem_base_t * sibp = subd.get_basep();
-            if (sibp->prune_mask & prune_all_below)
-                continue;       // all done here and below
-            else if (in_prune) {
-                if (sibp->prune_mask & prune_up_chain)
-                    sibp->prune_mask &= ~prune_up_chain;    // clear it
-            }
-            if (std::get_if<inmem_dir_t>(&subd)) {
-                propagate_prune(subd, src_dir_pt_s, in_prune, op);
-            } else if (const auto * csymp
-                                { std::get_if<inmem_symlink_t>(&subd) }) {
-                if (in_prune) {
-                    sibp->prune_mask |= prune_all_below;
-                    fs::path target = csymp->target;
-                    if (target.is_relative())
-                        target = fs::path(src_dir_pt_s) / target;
-                    fs::path target_c = fs::canonical(target, ec);
-                    if (ec) {
-                        pr_err(1, "prune bad symlink target path: {}{}\n",
-                               s(target), l(ec));
-                        ++q->num_prune_sym_pt_err;
-                        continue;
-                    }
-                    if (path_contains_canon(op->source_pt, target_c)) {
-                        inmem_dir_t * l_odirp =
-                            prune_mark_up_chain(target_c, op, ec);
-                        if (ec) {
-                            ++q->num_prune_err;
-                            continue;
-                        }
-                        if (l_odirp->prune_mask & prune_all_below)
-                            continue;
-                        inmem_t sl_nod { *l_odirp };
-                        propagate_prune(sl_nod, target_c.parent_path(),
-                                        in_prune, op);
-                    } else {
-                        ++q->num_prune_sym_outside;
-                        pr_err(1, "prune symlink target path: {} outside "
-                               "SPATH{}\n", s(target_c), l());
-                    }
-                }
-            } else if (std::get_if<inmem_regular_t>(&subd))
-                propagate_prune(subd, src_dir_pt_s, in_prune, op);
-            else  if (in_prune) {
-                sibp->prune_mask |= prune_all_below;
-                ++q->num_pruned_node;
-            }
-        }       // end of range based loop on sdir_v
-    }
 }
 
+// propagate prune marks out from the prune_exact marks that were
+// set in the first pass. This is the second pass.
+// Expects a_nod to be a directory. s_par_pt_s is that parent
+// path of a_nod .
+static void
+prune_prop_dir(const inmem_dir_t * a_dirp, const sstring & s_par_pt_s,
+               bool in_prune, const struct opts_t * op) noexcept
+{
+    bool at_src_rt { };
+    // bool start_in_prune { };
+    std::error_code ec { };
+    struct stats_t * q { &op->mutp->stats };
+    sstring src_dir_pt_s { s_par_pt_s };
+
+    if (a_dirp->is_root)
+        at_src_rt = true;
+    else
+        src_dir_pt_s += '/' + a_dirp->filename;
+pr_err(-1, "{}: s_par_pt_s: {}, src_dir_pt_s: {}\n", __func__, s_par_pt_s, src_dir_pt_s);
+
+    if (in_prune) {
+        if (a_dirp->prune_mask & prune_all_below)
+            return;
+        else if (! at_src_rt) {
+            if (a_dirp->prune_mask & prune_up_chain)
+                a_dirp->prune_mask &= ~prune_up_chain;
+            else {
+                prune_mark_up_chain(s_par_pt_s, op, ec);
+                if (ec) {
+                    ++q->num_prune_err;
+                    return;
+                }
+            }
+        }
+        ++q->num_pruned_node;
+        a_dirp->prune_mask |= prune_all_below;
+    } else {
+        if (a_dirp->prune_mask & prune_exact) {
+            in_prune = true;
+            a_dirp->prune_mask |= prune_all_below;
+            ++q->num_pruned_node;
+            if (! at_src_rt) {
+                prune_mark_up_chain(s_par_pt_s, op, ec);
+                if (ec) {
+                    ++q->num_prune_err;
+                    return;
+                }
+            }
+        }
+    }
+
+    for (auto & subd : a_dirp->sdirs_sp->sdir_v) {
+        inmem_base_t * sibp = subd.get_basep();
+        if (sibp->prune_mask & prune_all_below)
+            continue;       // all done here and below
+        else if (in_prune) {
+            if (sibp->prune_mask & prune_up_chain)
+                sibp->prune_mask &= ~prune_up_chain;    // clear it
+        }
+        if (const auto * dirp { std::get_if<inmem_dir_t>(&subd) }) {
+            prune_prop_dir(dirp, src_dir_pt_s, in_prune, op);
+        } else if (const auto * csymp
+                            { std::get_if<inmem_symlink_t>(&subd) }) {
+            if (in_prune) {
+                if (! prune_prop_symlink(csymp, src_dir_pt_s, op))
+                    continue;
+            } else if (csymp->prune_mask & prune_exact) {
+                if (! (sibp->prune_mask & prune_all_below))
+                    sibp->prune_mask |= prune_up_chain;
+                if (! prune_prop_symlink(csymp, src_dir_pt_s, op))
+                    continue;
+                prune_mark_up_chain(src_dir_pt_s, op, ec);
+            }
+        } else if (const auto * cregp {std::get_if<inmem_regular_t>(&subd) })
+            prune_prop_reg(cregp, src_dir_pt_s, in_prune, op);
+        else  if (in_prune) {
+            sibp->prune_mask |= prune_all_below;
+            ++q->num_pruned_node;
+        }
+    }       // end of range based loop on sdir_v
+}
+
+// Called from main(). Starts single pass clone/copy when neither the --cache
+// nor --prune= option is given.
 static std::error_code
 do_clone(const struct opts_t * op) noexcept
 {
-    struct stat root_stat;
     std::error_code ec { };
+    struct mut_opts_t * omutp { op->mutp };
+    struct stats_t * q { &omutp->stats };
     auto start { chron::steady_clock::now() };
+    struct stat root_stat { };
 
     if (stat(op->source_pt.c_str(), &root_stat) < 0) {
         ec.assign(errno, std::system_category());
         return ec;
     }
-    op->mutp->starting_fs_inst = root_stat.st_dev;
-    ec = clone_work(0, op->source_pt, op->destination_pt, op);
+    omutp->starting_fs_inst = root_stat.st_dev;
+    q->num_node = 1;    // count the source root node
+    ec = clone_work(op->source_pt, op->destination_pt, op);
     if (ec)
         pr_err(-1, "problem with clone_work({}){}\n", s(op->source_pt),
                 l(ec));
@@ -2987,32 +3116,26 @@ do_clone(const struct opts_t * op) noexcept
     return ec;
 }
 
+// Called from main(). Starts pass 1 (caching) when --cache or --prune=
+// option is given.
 static std::error_code
-do_cache(inmem_t & src_rt_cache, const struct opts_t * op) noexcept
+do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
 {
-    struct stat root_stat;
+    int pass { 1 };
     std::error_code ec { };
+    uint8_t * sbrk_p { static_cast<uint8_t *>(sbrk(0)) };
+    struct mut_opts_t * omutp { op->mutp };
+    struct stats_t * q { &omutp->stats };
     auto start { chron::steady_clock::now() };
 
-    if (stat(op->source_pt.c_str(), &root_stat) < 0) {
-        ec.assign(errno, std::system_category());
-        return ec;
-    }
-    op->mutp->starting_fs_inst = root_stat.st_dev;
-    auto * rt_dirp { std::get_if<inmem_dir_t>(&src_rt_cache) };
-    if (rt_dirp == nullptr) {
-        ec.assign(ENOMEM, std::system_category());
-        return ec;
-    }
-    rt_dirp->shstat.st_dev = root_stat.st_dev;
-    rt_dirp->shstat.st_mode = root_stat.st_mode;
-
-    uint8_t * sbrk_p { static_cast<uint8_t *>(sbrk(0)) };
-    op->mutp->cache_rt_dirp = rt_dirp;    // mutable to hold root directory ptr
-    ec = cache_src(0, rt_dirp, op->source_pt, op);
+    q->num_node = 1;    // count the source root node
+    pr_err(5, "\n{}: >> start of pass {} (cache source)\n", __func__, pass);
+    ec = cache_src(0, omutp->cache_rt_dirp, op->source_pt, op);
     if (ec)
-        pr_err(-1, "problem with clone_work({}){}\n", s(op->source_pt),
-                l(ec));
+        pr_err(-1, "{}: problem with cache_src({}){}\n", __func__,
+               s(op->source_pt), l(ec));
+// pr_err(-1, "{}: show_cache after pass 1\n", __func__);
+// show_cache(src_rt_cache, true, op);
 
     auto end { chron::steady_clock::now() };
     auto ms
@@ -3028,12 +3151,14 @@ do_cache(inmem_t & src_rt_cache, const struct opts_t * op) noexcept
     bool skip_destin = op->no_destin;
 
     if (op->prune_given) {
-        struct stats_t * q { &op->mutp->stats };
-
         if (q->num_prune_exact > 0) {
             auto start_of_prune { end };
 
-            propagate_prune(src_rt_cache, op->source_pt.string(), false, op);
+            ++pass;
+            pr_err(5, "\n{}: >> start of pass {} (prune propagate)\n",
+                   __func__, pass);
+            prune_prop_dir(omutp->cache_rt_dirp, op->source_pt.string(),
+                           omutp->prune_take_all, op);
             end = chron::steady_clock::now();
             ms = chron::duration_cast<chron::milliseconds>
                                         (end - start_of_prune).count();
@@ -3048,11 +3173,14 @@ do_cache(inmem_t & src_rt_cache, const struct opts_t * op) noexcept
             skip_destin = true;
         }
     }
+    ++pass;
+    pr_err(5, "\n{}: >> start of pass {} (unroll)\n", __func__, pass);
     auto start_of_unroll { end };
     bool do_unroll { false };
     if (! skip_destin) {
         do_unroll = true;
-        ec = unroll_cache(src_rt_cache, op->source_pt.string(), true, op);
+        ec = unroll_cache(src_rt_cache, op->source_pt.parent_path(),
+                          true, op);
         if (ec)
             pr_err(0, "unroll_cache() failed{}\n", l(ec));
     }
@@ -3061,14 +3189,15 @@ do_cache(inmem_t & src_rt_cache, const struct opts_t * op) noexcept
         long tree_sz { static_cast<const uint8_t *>(sbrk(0)) - sbrk_p };
         pr_err(-1, "Tree size: {} bytes\n", tree_sz);
 
-        size_t counted_nodes { 1 + count_cache(rt_dirp, false, op) };
+        size_t counted_nodes { 1 + count_cache(omutp->cache_rt_dirp, false,
+                                               op) };
         pr_err(-1, "Tree counted nodes: {} at top level\n", counted_nodes);
 
-        counted_nodes = 1 + count_cache(rt_dirp, true, op);
+        counted_nodes = 1 + count_cache(omutp->cache_rt_dirp, true, op);
         pr_err(-1, "Tree counted nodes: {} [recursive]\n", counted_nodes);
 
         std::vector<size_t> ra;
-        depth_count_cache(rt_dirp, ra);
+        depth_count_cache(omutp->cache_rt_dirp, ra);
         pr_err(-1, "Depth count cache:\n");
         for (int d { 0 }; auto k : ra) {
             pr_err(-1, "  {}: {}\n", d, k);
@@ -3164,7 +3293,10 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
             break;
         case 'p':
             op->prune_given = true;
-            l_pt = fs::canonical(optarg, ec);
+            if (fs::is_symlink(optarg, ec))
+                l_pt = fs::absolute(optarg, ec);
+            else if (! ec)
+                l_pt = fs::canonical(optarg, ec);
             if (ec)
                 pr_err(-1, "<< failed to find {}; ignored\n", optarg, l(ec));
             else
@@ -3290,27 +3422,39 @@ main(int argc, char * argv[])
     if (res)
         return (res < 0) ? 0 : res;
 
+    // expect source to be either an existing directory or a symlink to
+    // an existing directory.
     if (op->source_given) {
         fs::path pt { op->src_cli };
 
-        if (fs::exists(pt, ec) && fs::is_directory(pt, ec)) {
-            op->source_pt = fs::canonical(pt, ec);
+        if (pt.is_absolute())
+            op->source_pt = pt;
+        else {
+            op->source_pt = fs::absolute(pt, ec);
             if (ec) {
-                pr_err(-1, "canonical({}) failed{}\n", s(pt), l(ec));
+                pr_err(-1, "fs::absolute({}) failed{}\n", s(pt), l(ec));
                 return 1;
             }
-        } else if (ec) {
-            pr_err(-1, "{}: exists() or is_directory() failed{}\n", s(pt),
-                   l(ec));
-        } else {
-            pr_err(-1, "SPATH: {}: doesn't exist, is not a directory, or "
-                   "...{}\n",
-                   op->src_cli, l(ec));
-            return 1;
         }
-    } else
+    } else { // expect sysfs_root to be an absolute path
         op->source_pt = sysfs_root;
-    op->mutp->starting_src_sz = op->source_pt.string().size();
+    }
+    fs::file_status src_fstatus { fs::status(op->source_pt, ec) };
+
+    if (ec) {
+        pr_err(-1, "default SPATH: {} problem{}\n", s(op->source_pt), l(ec));
+        return 1;
+    }
+    if (! fs::is_directory(src_fstatus)) {
+        pr_err(-1, "expected SPATH: {} to be a directory, or a symlink to "
+               "a directory{}\n", s(op->source_pt));
+        return 1;
+    }
+
+    auto src_sz = op->source_pt.string().size();
+    if ((src_sz == 1) && (op->source_pt.string()[0] == '/'))
+        src_sz = 0;
+    op->mutp->starting_src_sz = src_sz;
 
     if (! op->no_destin) {
         sstring d_str;
@@ -3355,6 +3499,8 @@ main(int argc, char * argv[])
                            l(ec));
                     return 1;
                 }
+                pr_err(0, "In DPATH directory: {} created a new directory: "
+                       "{}\n", s(d_p_pt), s(d_pt.filename()));
                 op->destination_pt = fs::canonical(d_pt, ec);
                 op->destin_all_new = true;
                 if (ec) {
@@ -3496,13 +3642,13 @@ main(int argc, char * argv[])
             pr_err(0, "prune vector size after sort then unique is "
                        "{}\n", pr_sz);
         }
-        bool prun_warning_issued {};
+        bool prun_1_is_contained {};
         for (const auto & tt : op->mutp->prune_v) {
-            prun_warning_issued = path_contains_canon(op->source_pt, tt);
-            if (prun_warning_issued)
+            prun_1_is_contained = path_contains_canon(op->source_pt, tt);
+            if (prun_1_is_contained)
                 break;
         }
-        if (! prun_warning_issued)
+        if (! prun_1_is_contained)
             pr_err(-1, "--prune= option given but argument(s) not contained "
                    "in source: {}\n", s(op->source_pt));
     }
@@ -3622,14 +3768,35 @@ main(int argc, char * argv[])
     }
 
     if (op->cache_op_num > 0) {
-        inmem_dir_t s_inm_rt("", short_stat());
-        s_inm_rt.par_pt_s = op->source_pt;
+        inmem_dir_t s_inm_rt(op->source_pt.filename(), short_stat());
+        struct stat root_stat;
+
+        s_inm_rt.is_root = 1;
+        fs::path s_p_pt { op->source_pt.parent_path() };
+        if (0 == s_p_pt.compare(op->source_pt.root_path())) {
+            s_inm_rt.par_pt_s.clear();
+        } else {
+            s_inm_rt.par_pt_s = s_p_pt;
+        }
+
         s_inm_rt.depth = -1;
-        // only SPATH root has empty filename (2nd argument in following)
+        if (stat(op->source_pt.c_str(), &root_stat) < 0) {
+            ec.assign(errno, std::system_category());
+            pr_err(-1, "stat(source) failed{}\n", l(ec));
+            return 1;
+        }
+        op->mutp->starting_fs_inst = root_stat.st_dev;
+
+        // auto * rt_dirp { &s_inm_rt };
+        s_inm_rt.shstat.st_dev = root_stat.st_dev;
+        s_inm_rt.shstat.st_mode = root_stat.st_mode;
+        if (op->prune_given)
+            s_inm_rt.prune_mask = prune_up_chain;
         inmem_t src_rt_cache(s_inm_rt);
+        op->mutp->cache_rt_dirp = std::get_if<inmem_dir_t>(&src_rt_cache);
 
         if (cpf_verbose > 4) {
-            src_rt_cache.debug(">>> initial, empty cache tree:");
+            pr_err(4, ">>> initial, empty cache tree:");
             show_cache(src_rt_cache, true, op);
         }
         ec = do_cache(src_rt_cache, op);  // src ==> cache ==> destination
@@ -3638,7 +3805,6 @@ main(int argc, char * argv[])
         if (cpf_verbose > 4) {
             pr_err(4, ">>> final cache tree:\n");
             show_cache(src_rt_cache, true, op);
-            src_rt_cache.debug(">>> final debug of root directory");
         }
     } else {
         ec = do_clone(op);      // Single pass

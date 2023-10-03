@@ -4,7 +4,7 @@ PREFIX=/usr/local
 INSTDIR=$(DESTDIR)/$(PREFIX)/bin
 MANDIR=$(DESTDIR)/$(PREFIX)/man
 
-EXECS = renameat2
+EXECS = renameat2 fs_path_test
 	
 EXTRAS =
 
@@ -23,8 +23,19 @@ LARGE_FILE_FLAGS = -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
 LD = $(CXX)
 CXXLD = $(CXX)
 
+## # This is active if --enable-debug given to ./configure
+## DBG_CFLAGS = -Wextra -Wmisleading-indentation -Wduplicated-cond -Wlogical-op -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument -Wduplicated-branches -Wjump-misses-init
+## DBG_CXXFLAGS = -g -ggdb -DDEBUG -Wextra -Wmisleading-indentation -Wduplicated-cond -Wlogical-op -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument -Wduplicated-branches
+## DBG_CXXCLANGFLAGS = -DDEBUG -Wextra -Wmisleading-indentation -Wnull-dereference -Wshadow -Wunused -Wsizeof-array-argument
+## DBG_CPPFLAGS = -DDEBUG
+## else
+DBG_CFLAGS =
+DBG_CXXFLAGS =
+DBG_CPPFLAGS =
+## endif
+
 CPPFLAGS = -iquote ../include -iquote .. -D_REENTRANT $(LARGE_FILE_FLAGS) -DHAVE_CONFIG_H 
-CXXFLAGS = -std=c++11 -pthread -ggdb -O2 -W -Wall -iquote ../include -D_REENTRANT $(LARGE_FILE_FLAGS)
+##### CXXFLAGS = -std=c++11 -pthread -ggdb -O2 -W -Wall -iquote ../include -D_REENTRANT $(LARGE_FILE_FLAGS)
 ## CXXFLAGS = -std=c++14 -pthread -ggdb -O2 -W -Wall -iquote ../include -D_REENTRANT $(LARGE_FILE_FLAGS)
 ## CXXFLAGS = -std=c++17 -pthread -ggdb -O2 -W -Wall -iquote ../include -D_REENTRANT $(LARGE_FILE_FLAGS)
 ## CXXFLAGS = -std=c++20 -pthread -ggdb -O2 -W -Wall -iquote ../include -D_REENTRANT $(LARGE_FILE_FLAGS)
@@ -37,6 +48,14 @@ CFLAGS = -g -O2 -W -Wall
 # CFLAGS = -Wall -W -pedantic -std=c11 --analyze
 # CFLAGS = -Wall -W -pedantic -std=c++14 -fPIC
 # CFLAGS = -Wall -W -pedantic -std=c++20
+
+# For g++ below
+CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXFLAGS)
+## CXXFLAGS = -Wall -W -pedantic -std=c++20 -fanalyzer  $(DBG_CXXFLAGS)
+
+# For clang++ below
+## CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXCLANGFLAGS)
+## CXXFLAGS = -Wall -W -pedantic -std=c++20 --analyze  $(DBG_CXXCLANGFLAGS)
 
 LDFLAGS =
 
@@ -55,6 +74,9 @@ clean:
 
 renameat2: renameat2.o
 	$(LD) -o $@ $(LDFLAGS) $^
+
+fs_path_test: fs_path_test.o
+	$(CXXLD) -o $@ $(LDFLAGS) $^
 
 
 install: $(EXECS)

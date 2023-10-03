@@ -91,9 +91,9 @@ and directories.
 recursive directory scan (of \fISPATH\fR), symbolic links are visited but the
 scan does not normally 'descend' into the target of the symbolic link when
 that target is itself a directory. When this option is given then for
-symbolic links that target directories, if the link name matches \fISPTSYM\fR
-then a new directory is created in the output with the link name of
-\fISPTSYM\fR and this utility descends into \fISPTSYM\fR's target name and
+symbolic links that point to directories, if the link name matches
+\fISPTSYM\fR then a new directory is created in the output with the link name
+of \fISPTSYM\fR and this utility descends into \fISPTSYM\fR's target name and
 copies it. This action is sometimes called a 'deep' copy.
 .br
 As a convenience, \fISPTSYM\fR may be a symlink to a regular file in which
@@ -237,35 +237,36 @@ multiple file system instances. This option should be used with care as
 different file systems often have different characteristics.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIPRUN\fR
-\fIPRUN\fR should be a path matching a directory or a regular file under
-\fISPATH\fR. This option can be given multiple times.
-.br
-All nodes including and below each matched \fIPRUN\fR node will appear under
-\fIDPATH\fR (i.e. the output). Below each \fIPRUN\fR directory node any
-symlink will be followed to its target directory and the nodes
-below that will appear under \fIDPATH\fR. Also the nodes in the canonical
-path between \fISPATH\fR and each matching \fIPRUN\fR (plus each symlink
-target directory) will appear in the output. Any node under \fISPATH\fR
-_not_ mentioned in this paragraph will not appear in the output (i.e.
-under \fIDPATH\fR).
+\fIPRUN\fR should be a path matching a directory, a symlink to a directory,
+or a regular file under \fISPATH\fR. All nodes including and below each
+matched \fIPRUN\fR directory will appear under \fIDPATH\fR (i.e. the output).
+For symlinks matching \fIPRUN\fR and symlinks under a matched \fIPRUN\fR
+directory, corresponding symlinks will be placed in the output, even if
+their target is dangling. If the symlink target is a directory then its
+contents will also be placed in the output. Also the nodes in the canonical
+path between \fISPATH\fR and each matching \fIPRUN\fR node (plus each
+symlink target directory) will appear in the output. Any node under
+\fISPATH\fR _not_ mentioned in this paragraph is excluded from the
+output (i.e. under \fIDPATH\fR).
 .br
 Another way of describing the action of this option is that the output will
 contain a directory matching each \fIPRUN\fR, its children, grandchildren,
-etc. Additionally any symlink amongst those children will be followed to its
-target directory and its children, grandchildren, etc will also appear in
-the output. Finally any regular file matching \fIPRUN\fR will appear in the
-output.
+etc. Additionally any symlink matching \fIPRUN\fR, or amongst thos
+children, will be followed to its target directory and its children,
+grandchildren, etc will also appear in the output. Finally any regular
+file matching \fIPRUN\fR will appear in the output.
 .br
-See the PRUNING and ORDER OF EVALUATION sections below.
+This option can be given multiple times. The output will be the union of
+each \fI\-\-prune=PRUN\fR option. See the PRUNING and ORDER OF EVALUATION
+sections below.
 .TP
 \fB\-r\fR, \fB\-\-reglen\fR=\fIRLEN\fR
-\fIRLEN\fR is the maximum length. in bytes, that is cloned (copied) from
-each each regular file found in \fISPATH\fR to the corresponding file in
-\fIDPATH\fR. The default value is 256. The minimum value the \fIRLEN\fR
-can be is 0 and values over a million may run into ENOMEM errors. This
-action means the this utility is not a good candidate for making a
-perfect clone (i.e. preserving all user data) of a general purpose storage
-file system.
+\fIRLEN\fR is the maximum length, in bytes, that is cloned (copied) from each
+regular file found in \fISPATH\fR to the corresponding file in \fIDPATH\fR.
+The default value is 256. The minimum value the \fIRLEN\fR can be is 0 and
+values over a million may run into ENOMEM errors. This action means that this
+utility is not a good candidate for making a perfect clone (i.e. preserving
+all user data) of a general purpose storage file system.
 .br
 If \fIRLEN\fR is 0 then regular files under \fIDPATH\fR will be created (if
 permitted) but will be of zero length. If that regular file previously
@@ -275,15 +276,21 @@ be truncated to 0.
 Note that in pseudo file systems the st_size member returned by invoking
 the stat(2) system call on a regular file is misleading. The data read from
 a regular file in this context is effectively created at the point that the
-read(2) system call is invoked and is not known before that point.
+read(2) system call is invoked and is not known before that point. Due to
+this action the byte length shown 'ls -l' inside a pseudo file system is
+wrong (often 0 or 4096). This leads to programs like tar generating this
+type of curious warning: "File shrank by 4095 bytes; padding with zeros".
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
-\fISPATH\fR is the source of the clone (copy) operation. It must already
-exist and be either a directory or a symlink to a directory.
+\fISPATH\fR is the source of the clone (copy) operation. \fISPATH\fR must
+be an existing directory or a symlink to an existing directory. If it is
+a symlink then it is followed before the clone commences.
 .br
-The default source directory is /sys . If this option is given then either
-the \fI\-\-destination=DPATH\fR option must also be given or the
-\fI\-\-no\-xdev\fR option must be given.
+The default source directory is /sys . That directory is expected to exist
+or be a symlink to an existing directory.
+.br
+If this option is given then either the \fI\-\-destination=DPATH\fR option
+must also be given or the \fI\-\-no\-xdev\fR option must be given.
 .br
 The long option \fI\-\-source=SPATH\fR may be shortened to
 \fI\-\-src=SPATH\fR .
@@ -432,7 +439,9 @@ outside or to another pseudo file system.
 The third pass only outputs nodes that have been marked.
 .SH "ORDER OF EVALUATION"
 First command line options are processed. This includes doing "glob" (or
-file) expansions for the \fI\-\-exclude=PATT\fR option.
+file) expansions for any \fI\-\-exclude=PATT\fR options. Matching
+filenames, including their absolute path are consolidated into a
+single (sorted) list.
 .PP
 As a general rule, during the recursive scan (descent) of \fISPATH\fR at
 each node the dereference option is applied first, followed by
