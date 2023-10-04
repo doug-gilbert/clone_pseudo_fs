@@ -251,7 +251,7 @@ output (i.e. under \fIDPATH\fR).
 .br
 Another way of describing the action of this option is that the output will
 contain a directory matching each \fIPRUN\fR, its children, grandchildren,
-etc. Additionally any symlink matching \fIPRUN\fR, or amongst thos
+etc. Additionally any symlink matching \fIPRUN\fR, or amongst those
 children, will be followed to its target directory and its children,
 grandchildren, etc will also appear in the output. Finally any regular
 file matching \fIPRUN\fR will appear in the output.
@@ -356,9 +356,10 @@ order that this utility uses when cloning.
 .PP
 Symlinks have two parts: its link name and its target name. The target name
 is where it "goes" and that location in the destination may not exist for
-several reasons. The main reason is that the recursive descent algorithm may
-not have reached where the target name points. The other reason is changes
-in the underlying hardware which sysfs (for example) is trying to mirror have
+several reasons. In this utility the primary reason why a symlink target
+name may not exist is that the recursive descent algorithm may not have
+reached where the target name points. Another reason is changes in the
+underlying hardware which sysfs (for example) is trying to mirror have
 removed that target name location. Whatever the reason, so\-called "dangling"
 symlinks are always created. In a changing hardware environment the time
 between when a symlink is created (using its link name) and resolved (i.e.
@@ -438,51 +439,51 @@ outside or to another pseudo file system.
 .PP
 The third pass only outputs nodes that have been marked.
 .SH "ORDER OF EVALUATION"
-First command line options are processed. This includes doing "glob" (or
-file) expansions for any \fI\-\-exclude=PATT\fR options. Matching
-filenames, including their absolute path are consolidated into a
+initially command line options are processed. This includes
+doing "glob" (or file) expansions for any \fI\-\-exclude=PATT\fR options.
+Matching filenames, including their absolute path are consolidated into a
 single (sorted) list.
 .PP
 As a general rule, during the recursive scan (descent) of \fISPATH\fR at
 each node the dereference option is applied first, followed by
 exclude (both \fI\-\-exclude=PATT\fR and \fI\-\-excl\-fn=EFN\fR options)
-and finally the prune option is evaluated.
+and finally the prune option is applied.
 .PP
 There is a difference in the way \fI\-\-exclude=PATT\fR and
 \fI\-\-excl\-fn=EFN\fR are evaluated. The \fIPATT\fR argument is turned
 into a list of matching node paths before the scan commences. By the
-time the scan reaches that part of the hierarchial tree, that node may
+time the scan reaches that part of the hierarchy tree, that node may
 have been removed. This happens often in procfs with this option:
     \-\-exclude='/proc/[0-9]*'
-which is trying to exclude all PIDs (process IDs). A few may be found in
-the output, representing the processes that were created after the glob
-expansion of \fIPATT\fR and before the scan reached that part of the
-hierarchial tree. To improve performance, whenever an element from the
+which is trying to exclude all PIDs (process IDs). A few such PID directories
+may be found in the output, representing the processes that were created
+after the glob expansion of \fIPATT\fR and before the scan reached that part
+of the hierarchy tree. To improve performance, whenever an element from the
 list of matching node paths is matched, that element is removed from the
 list.
 .PP
-On the other hand, for the \fI\-\-excl\-fn=EFN\fR option, a list of
-filenames is generated during command line processing, one list entry
-for each \fI\-\-excl\-fn=EFN\fR option appearing on the command line.
+On the other hand, for the \fI\-\-excl\-fn=EFN\fR option, a list of filenames
+is generated during command line processing, one list entry for each
+\fI\-\-excl\-fn=EFN\fR option appearing on the command line. Each \fIEFN\fR
+can be matched zero or more times during the scan of \fISPATH\fR.
 .SH "CLONING SYSFS"
 An instance of the sysfs file pseudo file system is typically mounted under
-the /sys directory in Linux. So many utilities and tools like systemd
-expect sysfs in that location that Linux would probably be inoperable if
-sysfs is not present at that location.
+the /sys directory in Linux. So many utilities and tools like systemd expect
+sysfs in that location that Linux would probably be inoperable if sysfs is
+not present at that location.
 .PP
-The defaults of this utility are chosen so that invoking this utility
-without options will clone /sys int /tmp/sys . This will occur whether this
-utility is invoked by a root (superuser) or non\-root user. Many of
-the "ls*" family of utilities will work without elevated user privileges
-so invoking this utility as a non\-root user may be sufficient. Another
-advantage of a non\-root clone is that sensitive files under \fISPATH\fR
-protected by file permissions will not be cloned and thus will not
-appear in the destination under \fIDPATH\fR.
+The defaults of this utility are chosen so that invoking this utility without
+options will clone /sys int /tmp/sys . This will occur whether this utility
+is invoked by a root (superuser) or non\-root user. Many of the "ls*" family
+of utilities will work without elevated user privileges, so invoking this
+utility as a non\-root user may be sufficient. Another advantage of a
+non\-root clone is that sensitive files under \fISPATH\fR protected by file
+permissions will not be cloned and thus will not appear in the destination
+under \fIDPATH\fR.
 .PP
-It seems that all the symlink targets in sysfs stay within sysfs.
-Counter\-examples? The other pseudo file systems listed below have symlink
-targets outside their file system. For example /proc/self/root is a symlink
-which usually targets '/' .
+It seems that all the symlink targets in sysfs stay within sysfs. The other
+pseudo file systems listed below have symlink targets outside their file
+system. For example /proc/self/root is a symlink which usually targets '/' .
 .SH "CLONING PROCFS"
 The pseudo file system called procfs is typically mounted under /proc and
 primarily contains directories named for the Process Identifiers (PIDs)

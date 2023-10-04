@@ -50,8 +50,7 @@ echo ""
 rm -rf /tmp/sys
 echo ""
 
-clone_pseudo_fs -s /proc/ -d /tmp/proc -e '/proc/[0-9]*' \
--R /proc/self -w 0 -r 8192 $@
+clone_pseudo_fs -s /proc -d /tmp/proc -p /proc/self -r 8192
 
 clone_pseudo_fs -s /dev -d /tmp/dev -w 0 $@
 

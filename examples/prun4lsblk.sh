@@ -15,13 +15,12 @@
 
 set -x #echo on
 
-clone_pseudo_fs -s /proc/ -d /tmp/proc -e '/proc/[0-9]*' \
--R /proc/self -w 0 -r 8192
+clone_pseudo_fs -s /proc -d /tmp/proc -p /proc/self -r 8192
 
 clone_pseudo_fs -s /dev -d /tmp/dev -w 0
 
 clone_pseudo_fs -s /sys -d /tmp/sys -p /sys/block -p /sys/class/block \
--p /sys/dev/block/ -E subsystem -E device -S
+-p /sys/dev/block -E subsystem -E device -S
 
 # remove the -S if statistics are not required, or add it as in the
 # first two invocations
