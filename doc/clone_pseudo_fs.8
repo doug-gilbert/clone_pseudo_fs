@@ -140,11 +140,11 @@ A trailing '/' on \fIDPATH\fR is ignored. The long option
 \fB\-e\fR, \fB\-\-exclude\fR=\fIPATT\fR
 supply one or more file locations in the \fISPATH\fR subtree that will be
 excluded from the clone operation. If such a location is a directory, then
-the subtree under it is not scanned nor cloned. In this context \fIPATT\fR
-stands for "pattern" and the glob(3) system library call is used to match
-zero or more file locations that will be excluded. Note that \fIPATT\fR
-may need to be surrounded by single or double quotes to stop shell
-expansion.
+the subtree under it is not scanned so it is not cloned. In this context
+\fIPATT\fR stands for "pattern" and the glob(3) system library call is used
+to match zero or more file locations that will be excluded. Note that
+\fIPATT\fR may need to be surrounded by single or double quotes to stop
+shell expansion.
 .br
 This option may be given more than once. For example if trying to clone
 procfs, then excluding /proc/kmsg is needed, plus excluding all the
@@ -153,7 +153,7 @@ process/task directories may help. For example: \-\-exclude='/proc/[0\-9]*'
 /proc/self but are needed around '/proc/[0\-9]*' .
 .br
 Beware: a trailing slash on \fIPATT\fR is a different glob to the same
-\fIPATT\fR with the slash removed. In most cases there should not be
+\fIPATT\fR without that trailing slash. In most cases there should not be
 a trailing slash. Note that glob expansion takes place well before the
 scan of \fISPATH\fR starts and any \fIPATT\fR expressions not matching
 file at that time are ignored.
@@ -164,7 +164,9 @@ For more information see the DEREFERENCE AND EXCLUDE section below.
 \fIEFN\fR is a filename with no path component (e.g. 'subsystem'). If
 a directory named \fIEFN\fR or a symlink pointing to a directory is
 detected, all nodes below it are excluded. In the case of a symlink
-the comparison is on the link name, not the target name.
+the comparison is on the link name, not the target name. Other file
+types (e.g. regular files) whose filename matches \fIEFN\fR are also
+excluded.
 .br
 Any type of node can be matched multiple times against the same \fIEFN\fR.
 This option may be given multiple times in the same invocation. It can be
@@ -335,24 +337,25 @@ output the filename (under \fISPATH\fR) of any regular file that times
 out during its read(2).
 .SH "SYMBOLIC LINKS AND DIRECTORIES"
 Most storage file systems have some form of symbolic link (symlink) support.
-The DOS FAT file system does not have symlink support and it is still
-widely used. A bit like a parachute, symlinks are not needed most of the
-time, but in one situation, a parachute is extremely useful.
+A significant counter\-example is the venerable DOS FAT file system which
+does not have symlink support and it is still widely used. A bit like a
+parachute, symlinks are not needed most of the time, but like a parachute,
+are extremely useful is some situations.
 .PP
 In many pseudo file systems, symbolic links play an essential role. In the
 case of sysfs in Linux, there is arguably as much information in its
 symbolic links, as there is in its regular files.
 .PP
 Symlinks are a little tricky to handle when cloning a pseudo file system,
-especially sysfs, where the hardware is disappearing and re\-appearing (e.g.
-when the "uplink" cable between a USB hub and a computer is disconnected
-by accident and then reconnected). The clone/copy operations is termed
-as "recursive descent" which when a directory is detected in the source,
-a directory of the same name is created in the corresponding position of
-the destination. The algorithm then "descends" into the source directory
-copying each entry into the destination. The "ls \-f" command in Linux shows
-the native order in which a directory holds its contents and this is the
-order that this utility uses when cloning.
+especially sysfs, where the hardware may be disappearing and
+re\-appearing (e.g. when the "uplink" cable between a USB hub and a computer
+is disconnected by accident and then reconnected). The clone/copy operations
+is termed as "recursive descent" which when a directory is detected in the
+source, a directory of the same name is created in the corresponding
+position of the destination. The algorithm then "descends" into the source
+directory copying each entry into the destination. The "ls \-f" command in
+Linux shows the native order in which a directory holds its contents and
+this is the order that this utility uses when cloning.
 .PP
 Symlinks have two parts: its link name and its target name. The target name
 is where it "goes" and that location in the destination may not exist for
@@ -405,12 +408,12 @@ would be /proc/1234 . But that would match the exclude pattern, do they
 cancel out? [The argument to \-e is in single quotes to stop the shell
 expanding that glob, in this case this utility expands it.]
 .br
-No, they do not cancel out, /tmp/pr/1234/* will noT appear but /tmp/pr/self/*
+No, they do not cancel out, /tmp/pr/1234/* will not appear but /tmp/pr/self/*
 will appear and the '*' will be the same sub\-tree. However something has
 been lost: the fact that self's PID was 1234 . Although this may not be
-important in this case (i.e. to trick lsblk) it may be important in other
-cases. For this reason, clone_pseudo_fs creates a file in the destination
-under the \fISPTSYM\fR directory. This file is called
+important in this case (e.g. to trick lsblk utility) it may be important in
+other cases. For this reason, clone_pseudo_fs creates a file in the
+destination under the \fISPTSYM\fR directory. This file is called
 0_symlink_source_target and it contains the source's symbolic link target
 name. In this case the contents of that file would be '/proc/1234' .
 .SH PRUNING
@@ -419,7 +422,8 @@ the opposite action of what the exclude options do.
 .br
 When the \fI\-\-prune=PRUN\fR option is given the \fI\-\-cache\fR option
 is set implicitly, if it has not been given. The two passes used to
-implement the \fI\-\-cache\fR option is expanded to three passes.
+implement the \fI\-\-cache\fR option have a "prune propagate" pass added
+between the other two, making it a three pass algorithm.
 .PP
 The first pass makes an in\-memory copy of \fISPATH\fR as discussed above.
 Each directory's path name is compared to the \fISPRUN\fR argument(s). Any

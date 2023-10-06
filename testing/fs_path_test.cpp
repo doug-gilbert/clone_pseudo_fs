@@ -16,6 +16,8 @@ const fs::path red4_rt_pt { fs::path("/..//") };
 const fs::path sys_pt { fs::path("/sys") };
 const fs::path sys_trail_pt { fs::path("/sys/") };
 const fs::path red1_sys_pt { fs::path("//sys") };
+const fs::path typical1_pt { fs::path("/sys/class/typec") };
+const fs::path typical1_trail_pt { fs::path("/sys/class/typec/") };
 
 static const char *
 cstr(const fs::path & pt)
@@ -38,12 +40,17 @@ print_fs_attrs(const fs::path & pt)
         printf("   is_relative\n");
     else
         printf("   is_absolute\n");
-    printf("   lexically_normal(): %s\n", cstr(pt.lexically_normal()));
+    const fs::path ln_pt = pt.lexically_normal();
+    printf("   lexically_normal(): %s\n", cstr(ln_pt));
     printf("   filename(): %s\n", cstr(pt.filename()));
     fs::path nc_pt { pt };
     printf("   make_preferred(): %s\n", cstr(nc_pt.make_preferred()));
     printf("   root_path(): %s\n", cstr(pt.root_path()));
     printf("       parent_path(): %s\n", cstr(pt.parent_path()));
+
+    printf("   split lexically_normal with iterator:\n");
+    for (const auto & comp : ln_pt)
+	printf("        %s\n", cstr(comp));
 
     printf("\n");
 }
@@ -90,6 +97,14 @@ main()
 
     pt = red1_sys_pt;
     printf("filesystem first redendant /sys path : %s\n", cstr(pt));
+    print_fs_attrs(pt);
+
+    pt = typical1_pt;
+    printf("filesystem first typical path : %s\n", cstr(pt));
+    print_fs_attrs(pt);
+
+    pt = typical1_trail_pt;
+    printf("filesystem first typical path, trailing slash : %s\n", cstr(pt));
     print_fs_attrs(pt);
 
 }

@@ -1,12 +1,13 @@
 Linux utility for cloning pseudo filesystems like sysfs
 
-Changelog for pre-release clone_pseudo_fs-0.90 [20231003] [svn: r18]
+Changelog for pre-release clone_pseudo_fs-0.90 [20231005] [svn: r19]
   - build framework for cloning pseudo file systems utility
   - add --cache option, slightly deeper if invoked twice
   - add --dereference= option, expects symlink as argument,
     sl->directory and sl->regular are dereferenced,
     sl->other treated as if this option not given
   - add --exclude=, --excl-fn= and options
+    - make both apply to all node types
   - add --prune= option, argument expected to be a
     directory, symlink (to a dir) or a regular file
   - add examples directory with scripts generating minimal
