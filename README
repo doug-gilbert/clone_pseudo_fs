@@ -14,7 +14,7 @@ to PFS. The plural of both will have "_s" appended.
 
 The problem
 -----------
-But rsync already does clone/copy you may say? Various "features" of PFS_s
+But rsync already does clone/copy, doesn't it? Various "features" of PFS_s
 may trip up find, tar or rsync . Here are a few:
 
     - while most PFS_s are generally speaking "read-only", possibly apart
@@ -38,7 +38,8 @@ may trip up find, tar or rsync . Here are a few:
       Its value is 0 or 4096 irrespective of the amount of data that can
       actually be read. Some regular files in PFS_s have "waiting" reads
       (e.g. /proc/kmsg) that will hang a recursive directory scan unless
-      handled properly.
+      handled properly. Other regular files (e.g. /proc/cpuinfo) need
+      multiple reads, a bit like reading from a socket.
 
     - some special options available in tar and find, specifically -xdev ,
       are best to be defaults when cloning a PFS. The tracefs PFS
@@ -74,8 +75,8 @@ https://github.com/util-linux/util-linux .
 
 Implementation
 --------------
-The clone_pseudo_fs is written in C++ after various attempts with bash scripts.
-C++20 support was chosen because:
+The clone_pseudo_fs utility is written in C++ after various attempts with
+bash scripts. C++20 support was chosen because:
    - C++17 introduced the std::filesystem library which both g++ and clang++
      seem to have well supported
    - std::filesystem has a recursive_directory_iterator class which is exactly
@@ -83,11 +84,11 @@ C++20 support was chosen because:
    - recursive_directory_iterator conveniently ignores obscure objects such as
      the so-called "magic" symlinks in /proc
    - C++20 adds std::ranges and a second set of standard (STL) algorithms that
-     are ranges aware and that are (slightly) better than the originals (due to
-     20 years experience with the originals). So, for example, the process of
-     sorting all the exclude paths, making sure they are unique (i.e. removing
-     duplicates) and later doing a binary search on it, is shorter to code than
-     this sentence.
+     are ranges aware and that are (slightly) better than the originals (due
+     to 20 years experience with the originals). So, for example, the process
+     of sorting all the exclude paths, making sure they are unique (i.e.
+     removing duplicates) and later doing a binary search on it, is shorter
+     to code than this sentence.
    - std::filesystem supports both throwing exceptions and yielding errors via
      an error_code object. The implementer can choose either and this one chose
      the error_code approach. The error_code approach seems to lead to finer
@@ -99,6 +100,9 @@ Building package
 ----------------
 Installation instructions are in the INSTALL file.
 Note: g++ version 13 or clang++ version 16 or later versions are required.
+Both g++ version 12 or clang++ version 15 can be supported if 'libfmt' is
+available. On Debian/Ubuntu use 'apt install libfmt-dev' to install the
+libfmt library and its associated header file.
 
 Various options can be given to the ./configure script. Those
 specific to this package are:
@@ -115,4 +119,4 @@ Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
 Douglas Gilbert
-7th September 2023 [rev: 13]
+8th October 2023 [rev: 20]

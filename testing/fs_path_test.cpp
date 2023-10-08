@@ -1,23 +1,25 @@
 
 #include <filesystem>
 #include <string>
+#include <iostream>
 #include <cstdio>
 #include <cstring>
 
 namespace fs = std::filesystem;
 
-const fs::path def_pt { fs::path() };
-const fs::path mt_pt { fs::path("") };
-const fs::path rt_pt { fs::path("/") };
-const fs::path red1_rt_pt { fs::path("//") };
-const fs::path red2_rt_pt { fs::path("/..") };
-const fs::path red3_rt_pt { fs::path("/../") };
-const fs::path red4_rt_pt { fs::path("/..//") };
-const fs::path sys_pt { fs::path("/sys") };
-const fs::path sys_trail_pt { fs::path("/sys/") };
-const fs::path red1_sys_pt { fs::path("//sys") };
-const fs::path typical1_pt { fs::path("/sys/class/typec") };
-const fs::path typical1_trail_pt { fs::path("/sys/class/typec/") };
+static const fs::path def_pt { fs::path() };
+static const fs::path mt_pt { fs::path("") };
+static const fs::path rt_pt { fs::path("/") };
+static const fs::path red1_rt_pt { fs::path("//") };
+static const fs::path red2_rt_pt { fs::path("/..") };
+static const fs::path red3_rt_pt { fs::path("/../") };
+static const fs::path red4_rt_pt { fs::path("/..//") };
+static const fs::path sys_pt { fs::path("/sys") };
+static const fs::path sys_trail_pt { fs::path("/sys/") };
+static const fs::path red1_sys_pt { fs::path("//sys") };
+static const fs::path typical1_pt { fs::path("/sys/class/typec") };
+static const fs::path typical1_trail_pt { fs::path("/sys/class/typec/") };
+static const fs::path root_name_pt { fs::path("//root_name.com/boo") };
 
 static const char *
 cstr(const fs::path & pt)
@@ -58,9 +60,17 @@ print_fs_attrs(const fs::path & pt)
 int
 main()
 {
+#if 0
+    printf(">>> filesystem root-name: %s\n\n",
+	   cstr(fs::current_path().root_name()));
+    printf("\n>>> Components is path %s :\n", cstr(root_name_pt));
+    for (const auto & comp : root_name_pt)
+	printf("    %s\n", cstr(comp));
+#endif
+
     fs::path pt = def_pt;
 
-    printf("filesystem default path : %s\n", cstr(pt));
+    printf("\nfilesystem default path : %s\n", cstr(pt));
     print_fs_attrs(pt);
 
     pt = mt_pt;

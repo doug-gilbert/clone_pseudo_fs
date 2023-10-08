@@ -1,12 +1,12 @@
-.TH CLONE_PSEUDO_FS "8" "September 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "October 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
 clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
 .B clone_pseudo_fs
-[\fI\-\-cache\fR] [\fI\-\-dereference=SPTSYM\fR] [\fI\-\-destination=DPATH\fR]
+[\fI\-\-cache\fR] [\fI\-\-dereference=SYML\fR] [\fI\-\-destination=DPATH\fR]
 [\fI\-\-exclude=PATT\fR] [\fI\-\-excl\-fn=EFN\fR]  [\fI\-\-extra\fR]
 [\fI\-\-help\fR] [\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR]
-[\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR] [\fI\-\-prune=PRUN\fR]
+[\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR] [\fI\-\-prune=T_PT\fR]
 [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR] [\fI\-\-statistics\fR]
 [\fI\-\-verbose\fR] [\fI\-\-version\fR] [\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
@@ -38,11 +38,11 @@ Many horrible things can happen when copying subtrees, especially when
 \fISPATH\fR contains \fIDPATH\fR or vice versa (e.g. cloning /tmp/sys
 to /tmp/sys/a2). There are some sanity checks but using the
 \fI\-\-max\-depth=MAXD\fR is probably the best defence. Note that some pseudo
-file systems have waiting reads and to cope with these the \fI\-\-wait=MS_R\fR
-option should be used (e.g. when cloning tracefs usually found
-under /sys/kernel/trace ). If a pseudo file system has only a few waiting
-reads (e.g. procfs has one at /proc/kmsg) then the \fI\-\-exclude=PATT\fR can
-be used to bypass the trouble makers.
+file systems have "waiting" reads and to cope with these the
+\fI\-\-wait=MS_R\fR option should be used (e.g. when cloning tracefs usually
+found under /sys/kernel/trace ). If a pseudo file system has only a few
+waiting reads (e.g. procfs has one at /proc/kmsg) then the
+\fI\-\-exclude=PATT\fR can be used to bypass the trouble makers.
 .PP
 Calling this utility a "snapshot" copy would be a bit of a stretch as it
 takes between 5 and 10 seconds on a recent laptop. And that is more than
@@ -86,36 +86,36 @@ taken to scan \fISPATH\fR. As a rough estimation, scanning directories is
 faster than opening files and is definitely faster than creating new files
 and directories.
 .TP
-\fB\-R\fR, \fB\-\-dereference\fR=\fISPTSYM\fR
-\fISPTSYM\fR is assumed to be a symbolic link under \fISPATH\fR. During the
+\fB\-R\fR, \fB\-\-dereference\fR=\fISYML\fR
+\fISYML\fR is assumed to be a symbolic link under \fISPATH\fR. During the
 recursive directory scan (of \fISPATH\fR), symbolic links are visited but the
 scan does not normally 'descend' into the target of the symbolic link when
 that target is itself a directory. When this option is given then for
 symbolic links that point to directories, if the link name matches
-\fISPTSYM\fR then a new directory is created in the output with the link name
-of \fISPTSYM\fR and this utility descends into \fISPTSYM\fR's target name and
+\fISYML\fR then a new directory is created in the output with the link name
+of \fISYML\fR and this utility descends into \fISYML\fR's target name and
 copies it. This action is sometimes called a 'deep' copy.
 .br
-As a convenience, \fISPTSYM\fR may be a symlink to a regular file in which
+As a convenience, \fISYML\fR may be a symlink to a regular file in which
 case in the output a copy of the regular file will be placed in the current
 directory with the symlink's link name replacing that symlink.
 .br
-If \fISPTSYM\fR targets a node that is neither a directory nor a regular
-file then this option has no effect. If \fISPTSYM\fR is a "dangling" symlink
+If \fISYML\fR targets a node that is neither a directory nor a regular
+file then this option has no effect. If \fISYML\fR is a "dangling" symlink
 then a clone of that dangling symlink will appear in the output.
 .br
-This option may be given many times, any \fISPTSYM\fR that does not match a
+This option may be given many times, any \fISYML\fR that does not match a
 symlink under \fISPATH\fR is discarded, as are duplicates. As soon as a match
-is found on a \fISPTSYM\fR argument then that value is discarded from the
-list (of \fISPTSYM\fRs) that each symbolic link in the scan is checked
+is found on a \fISYML\fR argument then that value is discarded from the
+list (of \fISYML\fRs) that each symbolic link in the scan is checked
 against. This will stop symlink "cycles" causing infinite recursion.
 .br
-Notice that this option (\fI\-\-dereference=SPTSYM\fR]) only acts on exact
+Notice that this option (\fI\-\-dereference=SYML\fR]) only acts on exact
 matches on symlinks while the \fI\-\-exclude=PATT\fR option accepts patterns
 that are subject to "glob" expansion and can match any type of node.
 .br
-The long option \fI\-\-dereference=SPTSYM\fR may be shortened to
-\fI\-\-deref=SPTSYM\fR .
+The long option \fI\-\-dereference=SYML\fR may be shortened to
+\fI\-\-deref=SYML\fR .
 .br
 For more information see the DEREFERENCE AND EXCLUDE section below.
 .TP
@@ -170,7 +170,7 @@ excluded.
 .br
 Any type of node can be matched multiple times against the same \fIEFN\fR.
 This option may be given multiple times in the same invocation. It can be
-used in conjunction with the \fI\-\-exclude=PATT\fR and \fI\-\-prune=PRUN\fR
+used in conjunction with the \fI\-\-exclude=PATT\fR and \fI\-\-prune=T_PT\fR
 options to reduce the size of output written to \fIDPATH\fR.
 .br
 For more information see the DEREFERENCE AND EXCLUDE and ORDER OF EVALUATION
@@ -238,28 +238,28 @@ option, \fI\-\-no\-xdev\fR, allows the recursive directory scan to span
 multiple file system instances. This option should be used with care as
 different file systems often have different characteristics.
 .TP
-\fB\-p\fR, \fB\-\-prune\fR=\fIPRUN\fR
-\fIPRUN\fR should be a path matching a directory, a symlink to a directory,
+\fB\-p\fR, \fB\-\-prune\fR=\fIT_PT\fR
+\fIT_PT\fR should be a path matching a directory, a symlink to a directory,
 or a regular file under \fISPATH\fR. All nodes including and below each
-matched \fIPRUN\fR directory will appear under \fIDPATH\fR (i.e. the output).
-For symlinks matching \fIPRUN\fR and symlinks under a matched \fIPRUN\fR
+matched \fIT_PT\fR directory will appear under \fIDPATH\fR (i.e. the output).
+For symlinks matching \fIT_PT\fR and symlinks under a matched \fIT_PT\fR
 directory, corresponding symlinks will be placed in the output, even if
 their target is dangling. If the symlink target is a directory then its
 contents will also be placed in the output. Also the nodes in the canonical
-path between \fISPATH\fR and each matching \fIPRUN\fR node (plus each
+path between \fISPATH\fR and each matching \fIT_PT\fR node (plus each
 symlink target directory) will appear in the output. Any node under
 \fISPATH\fR _not_ mentioned in this paragraph is excluded from the
 output (i.e. under \fIDPATH\fR).
 .br
 Another way of describing the action of this option is that the output will
-contain a directory matching each \fIPRUN\fR, its children, grandchildren,
-etc. Additionally any symlink matching \fIPRUN\fR, or amongst those
+contain a directory matching each \fIT_PT\fR, its children, grandchildren,
+etc. Additionally any symlink matching \fIT_PT\fR, or amongst those
 children, will be followed to its target directory and its children,
 grandchildren, etc will also appear in the output. Finally any regular
-file matching \fIPRUN\fR will appear in the output.
+file matching \fIT_PT\fR will appear in the output.
 .br
 This option can be given multiple times. The output will be the union of
-each \fI\-\-prune=PRUN\fR option. See the PRUNING and ORDER OF EVALUATION
+each \fI\-\-prune=T_PT\fR option. See the PRUNING and ORDER OF EVALUATION
 sections below.
 .TP
 \fB\-r\fR, \fB\-\-reglen\fR=\fIRLEN\fR
@@ -370,12 +370,12 @@ when its target name is created) may be measured in seconds, and that
 timespan increases the chance that something else has changed.
 .PP
 If this is indeed found to be a problem, using the
-\fI\-\-dereference=SPTSYM\fR option to turn that symlink into a directory
+\fI\-\-dereference=SYML\fR option to turn that symlink into a directory
 may be considered. As explained above, the "recursive descent" nature of
 the clone operation means that the files under a directory are scanned
 within milliseconds or less after their parent directory is found.
 .SH "DEREFERENCE AND EXCLUDE"
-These options are designed so that \fI\-\-dereference=SPTSYM\fR is as narrow
+These options are designed so that \fI\-\-dereference=SYML\fR is as narrow
 as possible while \fI\-\-exclude=PATT\fR is as broad as possible. The former
 increases the size of the clone which will slow the clone operation down.
 [Even worse they could lead to cycles which would continue indefinitely,
@@ -390,7 +390,7 @@ with the problem holds sensitive data or has special hardware. Linux pseudo
 file systems typically don't hold user data, rather they hold metadata (or
 data about data).
 .PP
-When a single invocation uses both the \fI\-\-dereference=SPTSYM\fR and the
+When a single invocation uses both the \fI\-\-dereference=SYML\fR and the
 \fI\-\-exclude=PATT\fR options, the result is typically what one would
 hope for. A good example is cloning procfs as the numbered directories are
 process identifiers (PIDs) running on the system at the time of the clone.
@@ -413,33 +413,36 @@ will appear and the '*' will be the same sub\-tree. However something has
 been lost: the fact that self's PID was 1234 . Although this may not be
 important in this case (e.g. to trick lsblk utility) it may be important in
 other cases. For this reason, clone_pseudo_fs creates a file in the
-destination under the \fISPTSYM\fR directory. This file is called
+destination under the \fISYML\fR directory. This file is called
 0_symlink_source_target and it contains the source's symbolic link target
 name. In this case the contents of that file would be '/proc/1234' .
 .SH PRUNING
 The term "prune" is used in the positive sense in this utility, basically
-the opposite action of what the exclude options do.
+the opposite action of what the exclude options do. To emphasise this
+point its argument is called \fIT_PT\fR which is an abbreviation of "take
+path". So what is not taken, is excluded.
 .br
-When the \fI\-\-prune=PRUN\fR option is given the \fI\-\-cache\fR option
+When the \fI\-\-prune=T_PT\fR option is given the \fI\-\-cache\fR option
 is set implicitly, if it has not been given. The two passes used to
 implement the \fI\-\-cache\fR option have a "prune propagate" pass added
 between the other two, making it a three pass algorithm.
 .PP
 The first pass makes an in\-memory copy of \fISPATH\fR as discussed above.
-Each directory's path name is compared to the \fISPRUN\fR argument(s). Any
-matches are marked as "exact". In the second pass those exact marks
-are propagated up (toward the root) and down (toward the leaf nodes).
-The "up" marks form a chain while the down marks are all the children,
-grandchildren, etc of the node with the exact mark. Nodes in the "down"
-marks that are symlinks are followed.
+Each path name (including those of directories and symlinks to directories)
+is compared to the \fIT_PT\fR argument(s). Any matches are marked
+as "exact". In the second pass those exact marks are propagated up (toward
+the root) and down (toward the leaf nodes). The "up" marks form a chain
+while the down marks form a sub\-tree where the exact mark's children,
+grandchildren, etc are marked. Nodes in the "down" marks that are symlinks
+are followed.
 .PP
 Why not propagate the marks in the first pass? Symlinks again! A marked
-symlink may be dangling at the point that it is processed in the first
-pass but at some point later in the first pass that dangling symlink
-may be resolved (i.e. the symlink's target node is created).  Once
-the first pass completes no more node will be added or excluded. Note
-that symlinks may still be dangling due to exclusions or pointing
-outside or to another pseudo file system.
+symlink may be dangling at the point that it is processed in the first pass
+but at some point later in the first pass that dangling symlink may be
+resolved (i.e. the symlink's target node is created).  Once the first pass
+completes no more node will be added or excluded. Note that symlinks may
+still be dangling due to exclusions or pointing outside or to
+another (pseudo) file system.
 .PP
 The third pass only outputs nodes that have been marked.
 .SH "ORDER OF EVALUATION"
@@ -451,7 +454,7 @@ single (sorted) list.
 As a general rule, during the recursive scan (descent) of \fISPATH\fR at
 each node the dereference option is applied first, followed by
 exclude (both \fI\-\-exclude=PATT\fR and \fI\-\-excl\-fn=EFN\fR options)
-and finally the prune option is applied.
+and finally the prune option's exact matches are marked.
 .PP
 There is a difference in the way \fI\-\-exclude=PATT\fR and
 \fI\-\-excl\-fn=EFN\fR are evaluated. The \fIPATT\fR argument is turned
@@ -459,9 +462,11 @@ into a list of matching node paths before the scan commences. By the
 time the scan reaches that part of the hierarchy tree, that node may
 have been removed. This happens often in procfs with this option:
     \-\-exclude='/proc/[0-9]*'
+.br
 which is trying to exclude all PIDs (process IDs). A few such PID directories
 may be found in the output, representing the processes that were created
-after the glob expansion of \fIPATT\fR and before the scan reached that part
+.B after
+the glob expansion of \fIPATT\fR and before the scan reached that part
 of the hierarchy tree. To improve performance, whenever an element from the
 list of matching node paths is matched, that element is removed from the
 list.
@@ -470,6 +475,18 @@ On the other hand, for the \fI\-\-excl\-fn=EFN\fR option, a list of filenames
 is generated during command line processing, one list entry for each
 \fI\-\-excl\-fn=EFN\fR option appearing on the command line. Each \fIEFN\fR
 can be matched zero or more times during the scan of \fISPATH\fR.
+.PP
+when the \fI\-\-prune=T_PT\fR option is given, a three pass algorithm is
+used. The first pass is as described above. The second pass "propagates"
+the exact \fIT_PT\fR matches toward the root (a chain of marks) and toward
+the leaves (marking all nodes in th exact mark's sub\-tree).
+.PP
+The final pass "unrolls" the in\-memory representation out into actual
+file system nodes under \fIDPATH\fR. If the \fI\-\-prune=T_PT\fR option has
+not been given then this is the second pass and all nodes in the in\-memory
+representation are transferred to \fIDPATH\fR. If the \fI\-\-prune=T_PT\fR
+option has been given then this is the third pass and only nodes that are
+marked in the in\-memory representation are transferred to \fIDPATH\fR.
 .SH "CLONING SYSFS"
 An instance of the sysfs file pseudo file system is typically mounted under
 the /sys directory in Linux. So many utilities and tools like systemd expect
@@ -488,6 +505,11 @@ under \fIDPATH\fR.
 It seems that all the symlink targets in sysfs stay within sysfs. The other
 pseudo file systems listed below have symlink targets outside their file
 system. For example /proc/self/root is a symlink which usually targets '/' .
+.PP
+Suggested options for reducing the size of the clone output:
+    \-\-excl\-fn=subsystem \-\-excl\-fn=device \-\-excl\-fn=power
+.br
+See the prun4ls*.sh files in the examples directory.
 .SH "CLONING PROCFS"
 The pseudo file system called procfs is typically mounted under /proc and
 primarily contains directories named for the Process Identifiers (PIDs)

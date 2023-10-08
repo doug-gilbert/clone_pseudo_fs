@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231005 [svn: r19]";
+static const char * const version_str = "0.90 20231008 [svn: r20]";
 
 #include <iostream>
 #include <fstream>
@@ -51,6 +51,7 @@ static const char * const version_str = "0.90 20231005 [svn: r19]";
 #include "bwprint.hpp"
 
 static const unsigned int def_reglen { 256 };
+static const int reg_re_read_sz { 1024 };
 
 namespace fs = std::filesystem;
 namespace chron = std::chrono;
@@ -80,13 +81,14 @@ static fs::path prev_rdi_pt;
 
 static int cpf_verbose;  // in 'struct opts_t' and file scope here ..
 
-#ifdef DEBUG
+#ifdef DEBUG    // use './configure --enable-debug' to get this set
 // the DEBUG define is set when './configure --enable-debug' is used
+// sloc is an abbreviation for "source_location" which is new in C++20
 static bool want_sloc { };      // set if DEBUG and -vV not given
 #endif
 
 // from the https://en.cppreference.com description of std::variant
-// "helper type for the visitor #4"
+// "helper type for the visitor #4". Not used currently.
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
@@ -518,7 +520,8 @@ static const auto dir_opt { fs::directory_options::skip_permission_denied };
 static std::error_code clone_work(const fs::path & src_pt,
                                   const fs::path & dst_pt,
                                   const struct opts_t * op) noexcept;
-static std::error_code cache_src(inmem_dir_t * odirp, const fs::path & src_pt,
+static std::error_code cache_src(inmem_dir_t * start_dirp,
+                                 const fs::path & src_pt,
                                  const struct opts_t * op) noexcept;
 static void prune_prop_dir(const inmem_dir_t * a_dirp,
                            const sstring & s_par_pt_s,
@@ -570,31 +573,32 @@ static inline sstring s(const fs::path & pt) { return pt.string(); }
 
 
 static const char * const usage_message1 {
-    "Usage: clone_pseudo_fs [--cache] [--dereference=SPTSYM]\n"
-    "                       [--destination=DPATH] [--exclude=PATT] "
-    "[--excl-fn=EFN]\n"
-    "                       [--extra] [--help] [--hidden] "
-    "[--max-depth=MAXD]\n"
-    "                       [--no-dst] [--no-xdev] [--prune=PRUN]\n"
-    "                       [--reglen=RLEN] [--source=SPATH] "
-    "[--statistics]\n"
-    "                       [--verbose] [--version] [--wait=MS_R]\n"
+    "Usage: clone_pseudo_fs [--cache] [--dereference=SYML] "
+    "[--destination=DPATH]\n"
+    "                       [--exclude=PATT] [--excl-fn=EFN] [--extra] "
+    "[--help]\n"
+    "                       [--hidden] [--max-depth=MAXD] [--no-dst] "
+    "[--no-xdev]\n"
+    "                       [--prune=T_PT] [--reglen=RLEN] "
+    "[--source=SPATH]\n"
+    "                       [--statistics] [--verbose] [--version] "
+    "[--wait=MS_R]\n"
     "  where:\n"
     "    --cache|-c         first cache SPATH to in-memory tree, then dump "
     "to\n"
     "                       DPATH. If used twice, also cache regular file\n"
     "                       contents\n"
-    "    --dereference=SPTSYM|-R SPTSYM    SPTSYM should be a symlink "
-    "within\n"
-    "                                      SPATH which will become a "
-    "directory\n"
-    "                                      under DPATH (i.e. a 'deep' copy)\n"
+    "    --dereference=SYML|-R SYML    SYML should be a symlink within "
+    "SPATH\n"
+    "                                  which will become a directory "
+    "under\n"
+    "                                  DPATH (i.e. a 'deep' copy)\n"
     "    --destination=DPATH|-d DPATH    DPATH is clone destination (def:\n"
     "                                    /tmp/sys (no default if SPATH "
     "given))\n"
-    "    --exclude=PATT|-e PATT    PAT is a glob pattern, matching files and\n"
-    "                              directories excluded (def: nothing "
-    "excluded)\n"
+    "    --exclude=PATT|-e PATT    PATT is a glob pattern, matching nodes\n"
+    "                              (including directories) in SPATH to be "
+    "excluded\n"
     "    --excl-fn=EFN|-E EFN    exclude nodes whose filenames match EFN. "
     "If node\n"
     "                            is symlink exclude matches on link "
@@ -609,9 +613,10 @@ static const char * const usage_message1 {
     "    --no-xdev|-N       clone of SPATH may span multiple file systems "
     "(def:\n"
     "                       stay in SPATH's containing file system)\n"
-    "    --prune=PRUN|-p PRUN    output will only contain files exactly "
+    "    --prune=T_PT|-p T_PT    output will only contain files exactly "
     "matching\n"
-    "                            or under PRUN. Symlinks are followed\n"
+    "                            or under T_PT (take path). Symlinks are "
+    "followed\n"
     "    --reglen=RLEN|-r RLEN    maximum length to clone of each regular "
     "file\n"
     "                             (def: 256 bytes)\n"
@@ -633,8 +638,8 @@ static const char * const usage_message2 {
     "Hidden files\nare skipped and symlinks are created, even if dangling. "
     "The default is only\nto copy a maximum of 256 bytes from regular files."
     " If the --cache option\nis given, a two pass clone is used; the first "
-    "pass creates an in memory\ntree. The --dereference=SPTSYM , "
-    "--exclude=PATT and --prune=PRUN options\ncan be invoked multiple "
+    "pass creates an in memory\ntree. The --dereference=SYML , "
+    "--exclude=PATT and --prune=T_PT options\ncan be invoked multiple "
     "times.\n"
 };
 
@@ -977,6 +982,7 @@ split_path(const sstring & par_pt_s, const sstring & base_pt_s,
     const size_t base_pt_sz { base_pt_s.size() };
     size_t par_pt_sz { par_pt_s.size() };
 
+    ec.clear();
     if ((base_pt_sz == par_pt_sz) &&
         (0 == memcmp(base_pt_s.c_str(), pp_cp, par_pt_sz)))
         return res;
@@ -1016,6 +1022,7 @@ path_depth(const sstring & par_pt_s, const sstring & base_pt_s,
     const size_t base_pt_sz { base_pt_s.size() };
     size_t par_pt_sz { par_pt_s.size() };
 
+    ec.clear();
     if ((base_pt_sz == par_pt_sz) &&
         (0 == memcmp(base_pt_s.c_str(), pp_cp, par_pt_sz)))
         return res;
@@ -1174,20 +1181,29 @@ xfr_reg_file2inmem(const sstring & from_file, inmem_regular_t & ireg,
     }
     from_perms = from_stat.st_mode & stat_perm_mask;
     if (op->reglen > 0) {
-        num = read(from_fd, bp, op->reglen);
-        if (num < 0) {
-            res = errno;
-            num = read_err_wait(from_fd, bp, res, op);
+        int off {};
+
+        do {
+            num = read(from_fd, bp + off, op->reglen - off);
             if (num < 0) {
-                if (num == -2)
-                    pr_err(0, "timed out waiting for this file: {}{}\n",
-                           from_file, l());
-                num = 0;
-                res = 0;
-                close(from_fd);
-                goto store;
+                res = errno;
+                num = read_err_wait(from_fd, bp, res, op);
+                if (num < 0) {
+                    if (num == -2)
+                        pr_err(0, "timed out waiting for this file: {}{}\n",
+                               from_file, l());
+                    num = 0;
+                    res = 0;
+                    close(from_fd);
+                    goto store;
+                }
+            } else {
+                off += num;
+                if (num < reg_re_read_sz)
+                    break;
             }
-        }
+        } while (true);
+        num = off;
     } else
         num = 0;
     // closing now might help in this function is multi-threaded
@@ -1294,19 +1310,28 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
     }
     from_perms = from_stat.st_mode & stat_perm_mask;
     if (op->reglen > 0) {
-        num = read(from_fd, bp, op->reglen);
-        if (num < 0) {
-            res = errno;
-            num = read_err_wait(from_fd, bp, res, op);
+        int off {};
+
+        do {
+            num = read(from_fd, bp + off, op->reglen - off);
             if (num < 0) {
-                if (num == -2)
-                    pr_err(0, "timed out waiting for this file: {}{}\n",
-                           from_file, l());
-                num = 0;
-                close(from_fd);
-                goto do_destin;
+                res = errno;
+                num = read_err_wait(from_fd, bp, res, op);
+                if (num < 0) {
+                    if (num == -2)
+                        pr_err(0, "timed out waiting for this file: {}{}\n",
+                               from_file, l());
+                    num = 0;
+                    close(from_fd);
+                    goto do_destin;
+                }
+            } else {
+                off += num;
+                if (num < reg_re_read_sz)
+                    break;
             }
-        }
+        } while (true);
+        num = off;
     } else
         num = 0;
     // closing now might help in this function is multi-threaded
@@ -2234,9 +2259,6 @@ cache_recalc_grandparent(const fs::path & par_pt,
                          const struct opts_t * op, std::error_code & ec)
                          noexcept
 {
-    inmem_dir_t * prev_odirp = l_odirp;
-
-    ec.clear();
     const std::vector<sstring> vs { split_path(par_pt, osrc_pt, op, ec) };
     if (ec) {
         pr_err(-1, "{}: split_path({}, {}) failed{}\n", __func__, s(par_pt),
@@ -2261,6 +2283,7 @@ cache_recalc_grandparent(const fs::path & par_pt,
         }
     }
 
+    inmem_dir_t * prev_odirp = l_odirp;
     l_odirp = odirp;
 
     for (const auto & ss : vs) {
@@ -2301,7 +2324,6 @@ prune_mark_up_chain(const fs::path & par_pt, const struct opts_t * op,
     std::pair<inmem_dir_t *, inmem_regular_t *> res { };
     const fs::path & osrc_pt { op->source_pt };
 
-    ec.clear();
     const std::vector<sstring> vs { split_path(par_pt, osrc_pt, op, ec) };
     if (ec) {
         pr_err(-1, "{}: split_path({}) failed{}\n", __func__, s(par_pt),
@@ -2357,7 +2379,7 @@ prune_mark_up_chain(const fs::path & par_pt, const struct opts_t * op,
 // Note: cache_src() may be called recursively via the symlink_cache_src()
 // function when dereferencing the symlink's target.
 static std::error_code
-cache_src(inmem_dir_t * odirp, const fs::path & osrc_pt,
+cache_src(inmem_dir_t * start_dirp, const fs::path & osrc_pt,
           const struct opts_t * op) noexcept
 {
     struct mut_opts_t * omutp { op->mutp };
@@ -2370,7 +2392,7 @@ cache_src(inmem_dir_t * odirp, const fs::path & osrc_pt,
     int depth;
     int prev_depth { -1 };    // assume descending into directory
     int prev_dir_ind { -1 };
-    inmem_dir_t * l_odirp { odirp };
+    inmem_dir_t * l_odirp { start_dirp };
     inmem_dir_t * prev_odirp { };
     struct stats_t * q { &omutp->stats };
     std::error_code ecc { };
@@ -2453,9 +2475,9 @@ cache_src(inmem_dir_t * odirp, const fs::path & osrc_pt,
                 l_odirp = prev_odirp;   // short cut if backing up one
                 prev_odirp = nullptr;
             } else {    // need to recalculate parent's dirp
-                prev_odirp = l_odirp;
-                bool ok = cache_recalc_grandparent
-                                     (par_pt, osrc_pt, odirp, l_odirp, op, ec);
+                bool ok = cache_recalc_grandparent(par_pt, osrc_pt,
+                                                   start_dirp, l_odirp, op,
+                                                   ec);
                 if (ok)
                     prev_odirp = nullptr;
                 else {
@@ -2962,7 +2984,6 @@ prune_prop_symlink(const inmem_symlink_t * csymp,
     }
     if (path_contains_canon(op->source_pt, target_c)) {
         bool at_src_rt { };
-        inmem_dir_t * l_odirp { op->mutp->cache_rt_dirp };
         fs::path p_target { target_c.parent_path() };
         std::pair<inmem_dir_t *, inmem_regular_t *> res { };
 
@@ -2981,7 +3002,7 @@ prune_prop_symlink(const inmem_symlink_t * csymp,
             res.second->prune_mask |= prune_all_below;
             return true;
         }
-        l_odirp = res.first;
+        inmem_dir_t * l_odirp = res.first;
         if (l_odirp) {          // symlink -> directory
             if ((l_odirp->prune_mask & prune_all_below) || at_src_rt)
                 return false;
@@ -3021,7 +3042,6 @@ prune_prop_reg(const inmem_regular_t * a_regp, const sstring & s_par_pt_s,
         a_regp->prune_mask |= prune_all_below;
     } else {
         if (a_regp->prune_mask & prune_exact) {
-            in_prune = true;
             a_regp->prune_mask |= prune_all_below;
             ++q->num_pruned_node;
             prune_mark_up_chain(s_par_pt_s, op, ec);
@@ -3272,6 +3292,22 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
     if (op->want_stats > 0)
         show_stats(op);
     return ec;
+}
+
+static void
+run_unique_and_erase(std::vector<sstring> &v)
+{
+#if __clang__ && (__clang_major__ < 16)
+// #warning ">>> got CLANG 15"
+    // CLANG 15.x has issue with std::ranges::unique() so fallback
+    const auto ret { std::unique(v.begin(), v.end()) };
+    v.erase(ret, v.end());
+#else
+// #warning ">>> not CLANG 15"
+    // std::ranges::unique() returns a sub-range
+    const auto [new_log_end, old_end] { std::ranges::unique(v) };
+    v.erase(new_log_end, old_end);
+#endif
 }
 
 static int
@@ -3602,7 +3638,7 @@ main(int argc, char * argv[])
             return 1;
         }
         if (! op->mutp->deref_v.empty())
-            pr_err(-1, "Warning: --dereference=SPTSYM options ignored when "
+            pr_err(-1, "Warning: --dereference=SYML options ignored when "
                    "--no-destin option given\n");
     }
 
@@ -3691,9 +3727,7 @@ main(int argc, char * argv[])
                     pr_err(2, "need to sort exclude vector{}\n", l());
                     std::ranges::sort(op->mutp->glob_exclude_v);
                 }
-                const auto ret
-                        { std::ranges::unique(op->mutp->glob_exclude_v) };
-                op->mutp->glob_exclude_v.erase(ret.begin(), ret.end());
+                run_unique_and_erase(op->mutp->glob_exclude_v);
                 ex_sz = op->mutp->glob_exclude_v.size(); // could be less now
                 pr_err(0, "exclude vector size after sort then unique is "
                        "{}\n", ex_sz);
@@ -3710,8 +3744,7 @@ main(int argc, char * argv[])
                 pr_err(2, "need to sort prune vector{}\n", l());
                 std::ranges::sort(op->mutp->prune_v);
             }
-            const auto ret { std::ranges::unique(op->mutp->prune_v) };
-            op->mutp->prune_v.erase(ret.begin(), ret.end());
+            run_unique_and_erase(op->mutp->prune_v);
             pr_sz = op->mutp->prune_v.size(); // could be less now
             pr_err(0, "prune vector size after sort then unique is "
                        "{}\n", pr_sz);
@@ -3739,8 +3772,7 @@ main(int argc, char * argv[])
                 pr_err(2, "need to sort excl_fn vector{}\n", l());
                 std::ranges::sort(op->excl_fn_v);
             }
-            const auto ret { std::ranges::unique(op->excl_fn_v) };
-            op->excl_fn_v.erase(ret.begin(), ret.end());
+            run_unique_and_erase(op->excl_fn_v);
             ex_sz = op->excl_fn_v.size(); // could be less now
             pr_err(0, "excl_fn vector size after sort then unique is "
                        "{}\n", ex_sz);
@@ -3826,8 +3858,7 @@ main(int argc, char * argv[])
             if (op->mutp->deref_v.size() > 1) {
                 std::ranges::sort(op->mutp->deref_v);
                 // remove duplicates
-                const auto ret { std::ranges::unique(op->mutp->deref_v) };
-                op->mutp->deref_v.erase(ret.begin(), ret.end());
+                run_unique_and_erase(op->mutp->deref_v);
             }
         }
     }

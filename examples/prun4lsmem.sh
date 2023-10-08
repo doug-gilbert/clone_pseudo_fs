@@ -7,6 +7,6 @@
 set -x #echo on
 
 clone_pseudo_fs -p /sys/devices/system/memory -e /sys/bus -E subsystem \
--E device -S
+-E device -E power -S
 
 # remove the -S if statistics are not required.

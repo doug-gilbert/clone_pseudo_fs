@@ -9,9 +9,9 @@
 
 set -x #echo on
 
-clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem \
--p /sys/class/scsi_device/ -p /sys/class/scsi_generic/ -p /sys/bus/scsi \
--p /sys/class/nvme -S
+clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
+-p /sys/class/scsi_device -p /sys/class/scsi_generic -p /sys/bus/scsi \
+-p /sys/class/scsi_disk -p /sys/class/scsi_host -p /sys/class/nvme -S
 
 # remove the -S if statistics are not required
 
