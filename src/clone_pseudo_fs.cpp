@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231008 [svn: r20]";
+static const char * const version_str = "0.90 20231012 [svn: r21]";
 
 #include <iostream>
 #include <fstream>
@@ -2971,6 +2971,8 @@ prune_prop_symlink(const inmem_symlink_t * csymp,
     std::error_code ec { };
     struct stats_t * q { &op->mutp->stats };
 
+    if (csymp->prune_mask == 0)
+        ++q->num_pruned_node;
     csymp->prune_mask |= prune_up_chain;
     fs::path target = csymp->target;
     if (target.is_relative())
@@ -3027,6 +3029,8 @@ prune_prop_reg(const inmem_regular_t * a_regp, const sstring & s_par_pt_s,
     struct stats_t * q { &op->mutp->stats };
 
     if (in_prune) {
+        if (a_regp->prune_mask == 0)
+            ++q->num_pruned_node;
         if (a_regp->prune_mask & prune_all_below)
             return;
         if (a_regp->prune_mask & prune_up_chain)
@@ -3038,7 +3042,6 @@ prune_prop_reg(const inmem_regular_t * a_regp, const sstring & s_par_pt_s,
                 return;
             }
         }
-        ++q->num_pruned_node;
         a_regp->prune_mask |= prune_all_below;
     } else {
         if (a_regp->prune_mask & prune_exact) {
@@ -3078,7 +3081,9 @@ prune_prop_dir(const inmem_dir_t * a_dirp, const sstring & s_par_pt_s,
     if (in_prune) {
         if (a_dirp->prune_mask & prune_all_below)
             return;
-        else if (! at_src_rt) {
+        if (a_dirp->prune_mask == 0)
+            ++q->num_pruned_node;
+        if (! at_src_rt) {
             if (a_dirp->prune_mask & prune_up_chain)
                 a_dirp->prune_mask &= ~prune_up_chain;
             else {
@@ -3089,13 +3094,12 @@ prune_prop_dir(const inmem_dir_t * a_dirp, const sstring & s_par_pt_s,
                 }
             }
         }
-        ++q->num_pruned_node;
         a_dirp->prune_mask |= prune_all_below;
     } else {
         if (a_dirp->prune_mask & prune_exact) {
             in_prune = true;
-            a_dirp->prune_mask |= prune_all_below;
             ++q->num_pruned_node;
+            a_dirp->prune_mask |= prune_all_below;
             if (! at_src_rt) {
                 prune_mark_up_chain(s_par_pt_s, op, ec);
                 if (ec) {
@@ -3131,8 +3135,9 @@ prune_prop_dir(const inmem_dir_t * a_dirp, const sstring & s_par_pt_s,
         } else if (const auto * cregp {std::get_if<inmem_regular_t>(&subd) })
             prune_prop_reg(cregp, src_dir_pt_s, in_prune, op);
         else  if (in_prune) {
+            if (sibp->prune_mask == 0)
+                ++q->num_pruned_node;
             sibp->prune_mask |= prune_all_below;
-            ++q->num_pruned_node;
         }
     }       // end of range based loop on sdir_v
 }
@@ -3145,7 +3150,7 @@ do_clone(const struct opts_t * op) noexcept
     std::error_code ec { };
     struct mut_opts_t * omutp { op->mutp };
     struct stats_t * q { &omutp->stats };
-    auto start { chron::steady_clock::now() };
+    auto ch_start { chron::steady_clock::now() };
     struct stat root_stat { };
 
     if (stat(op->source_pt.c_str(), &root_stat) < 0) {
@@ -3169,8 +3174,9 @@ do_clone(const struct opts_t * op) noexcept
         }
     }
 
-    auto end { chron::steady_clock::now() };
-    auto ms { chron::duration_cast<chron::milliseconds>(end - start).count() };
+    auto ch_end { chron::steady_clock::now() };
+    auto ms { chron::duration_cast<chron::milliseconds>
+                                        (ch_end - ch_start).count() };
     auto secs { ms / 1000 };
     auto ms_remainder { ms % 1000 };
     char b[32];
@@ -3195,7 +3201,7 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
     uint8_t * sbrk_p { static_cast<uint8_t *>(sbrk(0)) };
     struct mut_opts_t * omutp { op->mutp };
     struct stats_t * q { &omutp->stats };
-    auto start { chron::steady_clock::now() };
+    auto ch_start { chron::steady_clock::now() };
 
     q->num_node = 1;    // count the source root node
     pr_err(5, "\n{}: >> start of pass {} (cache source)\n", __func__, pass);
@@ -3204,9 +3210,10 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
         pr_err(-1, "{}: problem with cache_src({}){}\n", __func__,
                s(op->source_pt), l(ec));
 
-    auto end { chron::steady_clock::now() };
+    auto ch_end { chron::steady_clock::now() };
     auto ms
-        { chron::duration_cast<chron::milliseconds>(end - start).count() };
+        { chron::duration_cast<chron::milliseconds>
+                                        (ch_end - ch_start).count() };
     auto total_ms { ms };
     auto secs { ms / 1000 };
     auto ms_remainder { ms % 1000 };
@@ -3219,16 +3226,16 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
 
     if (op->prune_given) {
         if (q->num_prune_exact > 0) {
-            auto start_of_prune { end };
+            auto start_of_prune { ch_end };
 
             ++pass;
             pr_err(5, "\n{}: >> start of pass {} (prune propagate)\n",
                    __func__, pass);
             prune_prop_dir(omutp->cache_rt_dirp, s(op->source_pt),
                            omutp->prune_take_all, op);
-            end = chron::steady_clock::now();
+            ch_end = chron::steady_clock::now();
             ms = chron::duration_cast<chron::milliseconds>
-                                        (end - start_of_prune).count();
+                                        (ch_end - start_of_prune).count();
             total_ms += ms;
             secs = ms / 1000;
             ms_remainder = ms % 1000;
@@ -3242,7 +3249,7 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
     }
     ++pass;
     pr_err(5, "\n{}: >> start of pass {} (unroll)\n", __func__, pass);
-    auto start_of_unroll { end };
+    auto start_of_unroll { ch_end };
     bool do_unroll { false };
     if (! skip_destin) {
         do_unroll = true;
@@ -3272,9 +3279,9 @@ do_cache(const inmem_t & src_rt_cache, const struct opts_t * op) noexcept
         }
     }
 
-    end = chron::steady_clock::now();
+    ch_end = chron::steady_clock::now();
     ms = chron::duration_cast<chron::milliseconds>
-                                (end - start_of_unroll).count();
+                                (ch_end - start_of_unroll).count();
     total_ms += ms;
     secs = ms / 1000;
     ms_remainder = ms % 1000;
@@ -3300,6 +3307,7 @@ run_unique_and_erase(std::vector<sstring> &v)
 #if __clang__ && (__clang_major__ < 16)
 // #warning ">>> got CLANG 15"
     // CLANG 15.x has issue with std::ranges::unique() so fallback
+    // tp std::unique()
     const auto ret { std::unique(v.begin(), v.end()) };
     v.erase(ret, v.end());
 #else
@@ -3532,6 +3540,11 @@ main(int argc, char * argv[])
                 return 1;
             }
         }
+        auto str { s(op->source_pt) };
+        sz = str.size();
+        if ((sz > 1) && ('/' == str[sz - 1]))
+             str.erase(str.end() - 1, str.end());
+        op->source_pt = str;
     } else { // expect sysfs_root to be an absolute path
         op->source_pt = sysfs_root;
     }

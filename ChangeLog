@@ -1,6 +1,6 @@
 Linux utility for cloning pseudo filesystems like sysfs
 
-Changelog for pre-release clone_pseudo_fs-0.90 [20231008] [svn: r20]
+Changelog for pre-release clone_pseudo_fs-0.90 [20231012] [svn: r21]
   - build framework for cloning pseudo file systems utility
   - add --cache option, slightly deeper if invoked twice
   - add --dereference= option, expects symlink as argument,
@@ -13,6 +13,7 @@ Changelog for pre-release clone_pseudo_fs-0.90 [20231008] [svn: r20]
   - add examples directory with scripts generating minimal
     pseudo file system copies for ls* utilities
   - improve handling of large regular files
+  - improve accuracy of 'Number of pruned nodes'
   - state the compilers required: g++ 13 or clang++ 16,
     later versions of those compilers should work
     - re-instate support for g++ 12 and clang++ 15 which
