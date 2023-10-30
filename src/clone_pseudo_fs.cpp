@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231012 [svn: r21]";
+static const char * const version_str = "0.90 20231030 [svn: r22]";
 
 #include <iostream>
 #include <fstream>

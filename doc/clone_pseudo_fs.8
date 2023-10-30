@@ -239,17 +239,19 @@ multiple file system instances. This option should be used with care as
 different file systems often have different characteristics.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIT_PT\fR
-\fIT_PT\fR should be a path matching a directory, a symlink to a directory,
-or a regular file under \fISPATH\fR. All nodes including and below each
-matched \fIT_PT\fR directory will appear under \fIDPATH\fR (i.e. the output).
-For symlinks matching \fIT_PT\fR and symlinks under a matched \fIT_PT\fR
-directory, corresponding symlinks will be placed in the output, even if
-their target is dangling. If the symlink target is a directory then its
-contents will also be placed in the output. Also the nodes in the canonical
-path between \fISPATH\fR and each matching \fIT_PT\fR node (plus each
-symlink target directory) will appear in the output. Any node under
-\fISPATH\fR _not_ mentioned in this paragraph is excluded from the
-output (i.e. under \fIDPATH\fR).
+where \fIT_PT\fR is an abbreviation for "Take PaTh". \fIT_PT\fR should be a
+path matching a directory, a symlink to a directory, or a regular file under
+\fISPATH\fR. All nodes including and below each matched \fIT_PT\fR directory
+will appear under \fIDPATH\fR (i.e. the output). For symlinks matching
+\fIT_PT\fR and symlinks under a matched \fIT_PT\fR directory, corresponding
+symlinks will be placed in the output, even if their target is dangling. If
+the symlink target is a directory then its contents will also be placed in
+the output. Also the nodes in the canonical path between \fISPATH\fR and
+each matching \fIT_PT\fR node (plus each symlink target directory) will
+appear in the output. Any node under \fISPATH\fR _not_ mentioned in this
+paragraph is
+.B excluded
+from the output (i.e. under \fIDPATH\fR).
 .br
 Another way of describing the action of this option is that the output will
 contain a directory matching each \fIT_PT\fR, its children, grandchildren,
@@ -279,7 +281,7 @@ Note that in pseudo file systems the st_size member returned by invoking
 the stat(2) system call on a regular file is misleading. The data read from
 a regular file in this context is effectively created at the point that the
 read(2) system call is invoked and is not known before that point. Due to
-this action the byte length shown 'ls -l' inside a pseudo file system is
+this action the byte length shown 'ls \-l' inside a pseudo file system is
 wrong (often 0 or 4096). This leads to programs like tar generating this
 type of curious warning: "File shrank by 4095 bytes; padding with zeros".
 .TP
@@ -338,9 +340,7 @@ out during its read(2).
 .SH "SYMBOLIC LINKS AND DIRECTORIES"
 Most storage file systems have some form of symbolic link (symlink) support.
 A significant counter\-example is the venerable DOS FAT file system which
-does not have symlink support and it is still widely used. A bit like a
-parachute, symlinks are not needed most of the time, but like a parachute,
-are extremely useful is some situations.
+does not have symlink support and it is still widely used.
 .PP
 In many pseudo file systems, symbolic links play an essential role. In the
 case of sysfs in Linux, there is arguably as much information in its
@@ -349,7 +349,7 @@ symbolic links, as there is in its regular files.
 Symlinks are a little tricky to handle when cloning a pseudo file system,
 especially sysfs, where the hardware may be disappearing and
 re\-appearing (e.g. when the "uplink" cable between a USB hub and a computer
-is disconnected by accident and then reconnected). The clone/copy operations
+is disconnected by accident and then reconnected). The clone/copy operation
 is termed as "recursive descent" which when a directory is detected in the
 source, a directory of the same name is created in the corresponding
 position of the destination. The algorithm then "descends" into the source
@@ -359,29 +359,27 @@ this is the order that this utility uses when cloning.
 .PP
 Symlinks have two parts: its link name and its target name. The target name
 is where it "goes" and that location in the destination may not exist for
-several reasons. In this utility the primary reason why a symlink target
-name may not exist is that the recursive descent algorithm may not have
-reached where the target name points. Another reason is changes in the
-underlying hardware which sysfs (for example) is trying to mirror have
-removed that target name location. Whatever the reason, so\-called "dangling"
-symlinks are always created. In a changing hardware environment the time
-between when a symlink is created (using its link name) and resolved (i.e.
-when its target name is created) may be measured in seconds, and that
-timespan increases the chance that something else has changed.
+several reasons. In this utility the primary reason why a symlink target name
+may not exist is that the recursive descent algorithm may not have reached
+where the target name points. Another reason is changes in the underlying
+hardware which sysfs (for example) is trying to mirror have removed that
+target name location. Whatever the reason, so\-called "dangling" symlinks
+are always created. In a changing hardware environment the time between when
+a symlink is created (using its link name) and resolved (i.e. when its target
+name is created) may be measured in seconds, and that timespan increases the
+chance that something else has changed.
 .PP
-If this is indeed found to be a problem, using the
-\fI\-\-dereference=SYML\fR option to turn that symlink into a directory
-may be considered. As explained above, the "recursive descent" nature of
-the clone operation means that the files under a directory are scanned
-within milliseconds or less after their parent directory is found.
+If this is indeed found to be a problem, using the \fI\-\-dereference=SYML\fR
+option to turn that symlink into a directory may be considered. As explained
+above, the "recursive descent" nature of the clone operation means that the
+files under a directory are scanned within milliseconds or less after their
+parent directory is reached.
 .SH "DEREFERENCE AND EXCLUDE"
-These options are designed so that \fI\-\-dereference=SYML\fR is as narrow
-as possible while \fI\-\-exclude=PATT\fR is as broad as possible. The former
-increases the size of the clone which will slow the clone operation down.
-[Even worse they could lead to cycles which would continue indefinitely,
-but the \fI\-\-max\-depth=MAXD\fR option will stop such a cycle, if given.]
-The latter (i.e. exclusions) will reduce the size of the clone which will
-speed up the clone operation.
+This utility's options are designed so that \fI\-\-dereference=SYML\fR is as
+narrow as possible while \fI\-\-exclude=PATT\fR is as broad as possible. The
+former increases the size of the clone which will slow the clone operation
+down. The latter (i.e. exclusions) will reduce the size of the clone which
+will speed up the clone operation.
 .PP
 If the plan is to tar/zip up the clone and send it to a remote location on
 the internet to debug, then excluding sub\-trees can remove information
@@ -397,10 +395,10 @@ process identifiers (PIDs) running on the system at the time of the clone.
 Cloning these takes a fair amount of time and space and it is hard to see
 how that information could be useful for remote debugging. However (there is
 always a 'but') the lsblk utility inspects the /proc/self/mountinfo file
-and 'self' is a symbolic link to the PID of the process accessing that file.
-So a good approach is to exclude all paths that start with a digit at the
-top level (e.g. '/proc/1/') and dereference the symbolic link '/proc/self/'.
-The invocation might look like this:
+and 'self' is a symbolic link to the PID of the process that is running
+this utility. So one approach is to exclude all paths that start with a
+digit at the top level (e.g. '/proc/1/') and dereference the symbolic
+link '/proc/self/'.  The invocation might look like this:
     clone_pseudo_fs \-s /proc \-d /tmp/pr \-e '/proc/[0\-9]*' \-r /proc/self
 .PP
 For sake of argument assume 'self' is a symbolic link to PID 1234 so that
@@ -414,13 +412,14 @@ been lost: the fact that self's PID was 1234 . Although this may not be
 important in this case (e.g. to trick lsblk utility) it may be important in
 other cases. For this reason, clone_pseudo_fs creates a file in the
 destination under the \fISYML\fR directory. This file is called
+.B
 0_symlink_source_target and it contains the source's symbolic link target
 name. In this case the contents of that file would be '/proc/1234' .
 .SH PRUNING
 The term "prune" is used in the positive sense in this utility, basically
 the opposite action of what the exclude options do. To emphasise this
-point its argument is called \fIT_PT\fR which is an abbreviation of "take
-path". So what is not taken, is excluded.
+point its argument is called \fIT_PT\fR which is an abbreviation of "Take
+PaTh". So what is not taken, is excluded.
 .br
 When the \fI\-\-prune=T_PT\fR option is given the \fI\-\-cache\fR option
 is set implicitly, if it has not been given. The two passes used to
@@ -440,16 +439,16 @@ Why not propagate the marks in the first pass? Symlinks again! A marked
 symlink may be dangling at the point that it is processed in the first pass
 but at some point later in the first pass that dangling symlink may be
 resolved (i.e. the symlink's target node is created).  Once the first pass
-completes no more node will be added or excluded. Note that symlinks may
+completes no more nodes will be added or excluded. Note that symlinks may
 still be dangling due to exclusions or pointing outside or to
 another (pseudo) file system.
 .PP
-The third pass only outputs nodes that have been marked.
+The third pass only outputs nodes that have been marked to \fIDPATH\fR.
 .SH "ORDER OF EVALUATION"
 initially command line options are processed. This includes
 doing "glob" (or file) expansions for any \fI\-\-exclude=PATT\fR options.
-Matching filenames, including their absolute path are consolidated into a
-single (sorted) list.
+Matching filenames, including their absolute paths, are consolidated into
+a single (sorted) list.
 .PP
 As a general rule, during the recursive scan (descent) of \fISPATH\fR at
 each node the dereference option is applied first, followed by
@@ -461,7 +460,7 @@ There is a difference in the way \fI\-\-exclude=PATT\fR and
 into a list of matching node paths before the scan commences. By the
 time the scan reaches that part of the hierarchy tree, that node may
 have been removed. This happens often in procfs with this option:
-    \-\-exclude='/proc/[0-9]*'
+    \-\-exclude='/proc/[0\-9]*'
 .br
 which is trying to exclude all PIDs (process IDs). A few such PID directories
 may be found in the output, representing the processes that were created
@@ -489,7 +488,7 @@ option has been given then this is the third pass and only nodes that are
 marked in the in\-memory representation are transferred to \fIDPATH\fR.
 .SH "CLONING SYSFS"
 An instance of the sysfs file pseudo file system is typically mounted under
-the /sys directory in Linux. So many utilities and tools like systemd expect
+the /sys directory in Linux. Many utilities and tools, like systemd, expect
 sysfs in that location that Linux would probably be inoperable if sysfs is
 not present at that location.
 .PP
@@ -523,7 +522,8 @@ It links to PID of the process that read /proc . That process might be
 multi\-threaded so there is also a symlink called "threaded\-self". One
 might think cloning these PID directories would not be much use for doing
 remote debugging but somewhat surprisingly lsblk accesses
-/proc/self/mountinfo .
+/proc/self/mountinfo to find the mount points of the block devices that it
+is enumerating.
 .PP
 Those PID directories contain, amongst other things, symlinks representing
 every open file descriptor of each PID. Without the default regular
