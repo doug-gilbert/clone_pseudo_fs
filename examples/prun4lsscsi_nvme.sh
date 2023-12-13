@@ -13,7 +13,7 @@
 set -x #echo on
 
 clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
--p /sys/class/nvme -S
+-p /sys/class/nvme -p /sys/class/nvme-subsystem -S
 
 # remove the -S if statistics are not required
 

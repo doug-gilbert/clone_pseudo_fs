@@ -11,8 +11,10 @@ set -x #echo on
 
 clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
 -p /sys/class/scsi_device -p /sys/class/scsi_generic -p /sys/bus/scsi \
--p /sys/class/scsi_disk -p /sys/class/scsi_host -p /sys/class/nvme -S
+-p /sys/class/scsi_disk -p /sys/class/scsi_host \
+-p /sys/class/nvme -p -p /sys/class/nvme-subsystem -S
 
 # remove the -S if statistics are not required
 
-# To exclude the NVMe devices, remove the '-p /sys/class/nvme' option.
+# To exclude the NVMe devices, remove the '-p /sys/class/nvme' and
+# '-p /sys/devices/virtual/nvme-subsystem' options.

@@ -6,7 +6,7 @@ Summary: 	Clone Linux pseudo file systems such as sysfs
 Name: 		%{name}
 Version: 	%{version}
 Release: 	%{release}
-License:	GPL
+License:	BSD-2-Clause
 Group:		Utilities/System
 Source0:	https://sg.danny.cz/scsi/%{name}-%{version}.tar.gz
 Url:		https://sg.danny.cz/scsi/lsurl.html

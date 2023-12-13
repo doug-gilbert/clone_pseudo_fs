@@ -26,7 +26,7 @@ endif
 
 # -std=<s> can be c99, c11, gnu11, etc.
 AM_CPPFLAGS = -iquote ${top_srcdir}/src -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 $(DBG_CPPFLAGS)
-AM_CFLAGS = -Wall -W $(DBG_CFLAGS)
+###AM_CFLAGS = -Wall -W $(DBG_CFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c++20 -fanalyzer $(DBG_CXXFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c++20 --analyze $(DBG_CXXFLAGS)
 # AM_CFLAGS = -Wall -W -pedantic -std=c++23 $(DBG_CXXFLAGS)
@@ -38,6 +38,8 @@ AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXFLAGS)
 # For clang++ below
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 $(DBG_CXXCLANGFLAGS)
 ## AM_CXXFLAGS = -Wall -W -pedantic -std=c++20 --analyze  $(DBG_CXXCLANGFLAGS)
+## AM_CXXFLAGS = -Wall -W -pedantic -std=c++23 $(DBG_CXXCLANGFLAGS)
+## AM_CXXFLAGS = -Wall -W -pedantic -std=c++23 --analyze  $(DBG_CXXCLANGFLAGS)
 
 clone_pseudo_fs_SOURCES = clone_pseudo_fs.cpp \
 			  bwprint.hpp
