@@ -10,7 +10,7 @@ if 'libfmt' is available. On Debian/Ubuntu use 'apt install libfmt-dev'
 to install the libfmt library and its associated header file.
 
 The build can either be with autotools or cmake. The cmake build is
-currently experiment.
+currently experimental.
 
 Autotools
 =========
@@ -77,6 +77,14 @@ The last cmake invocation needs root permissions. 'make clean' does
 the same thing as it does in autotools. There is no 'make distclean'
 so the above sequence leaves a lot of garbage "on the floor".
 
+Rather than the last step (i.e. 'cmake --install . ') this invocation:
+    cpack .
+
+will build a "deb" package and place it in the current directory.
+Root permissions are not required. That package can be installed with:
+    dpkg -i <package>
+and that will require root permissions.
+
 There is no uninstall but after a successful install there is a
 install_manifest.txt file that can be used to remove the files
 installed like this:
@@ -85,4 +93,4 @@ installed like this:
 Suggestions welcome.
 
 Douglas Gilbert
-12 December 2023
+13 December 2023

@@ -1,6 +1,8 @@
 cmake_minimum_required (VERSION 3.0)
 
-project(clone_pseudo_fs VERSION 0.89.2)
+project(clone_pseudo_fs VERSION 0.89.9)
+# Use version number: x.y.9 to indicate pre-release of x.(y+1) 
+# Example: VERSION 0.89.9 is pre-release of 0.90
 
 set (CMAKE_CXX_STANDARD 20 )
 set (CMAKE_CXX_STANDARD_REQUIRED ON)

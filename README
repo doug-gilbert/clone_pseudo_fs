@@ -118,5 +118,7 @@ or
 Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
+Instruction for using cmake are in the INSTALL file.
+
 Douglas Gilbert
-8th October 2023 [rev: 20]
+13th December 2023 [rev: 25]
