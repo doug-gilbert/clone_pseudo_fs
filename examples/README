@@ -1,7 +1,7 @@
 
 The bash shell scripts in this directory identify what parts of /sys ,
 /proc and /dev need to be copied to make the various ls* utilities
-work with their --sysroot= (or --sysfsroot= ) option.
+work with their --sysroot= option.
 
 Just using clone_pseudo_fs to copy all of /sys and then /proc may
 expose exploitable data if the copied data is placed in a public
@@ -16,4 +16,4 @@ exactly which files a ls* utility accesses. For example:
     strace lsblk >& /tmp/lsblk_strace.txt
 
 Douglas Gilbert
-20230923
+20231218

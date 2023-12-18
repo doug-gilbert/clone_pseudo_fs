@@ -12,44 +12,54 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH DESCRIPTION
 .\" Add any additional description here
 This is a Linux command line utility specialized for cloning pseudo file
-systems such as sysfs which is typically mounted under /sys .
+systems to 'normal' file storage. The default action of this utility is
+to clone /sys (usually holding the sysfs pseudo file system) to /tmp/sys .
+Without defaults that is equivalent to:
+    clone_pseudo_fs \-\-source=/sys \-\-destination=/tmp/sys
 .PP
-The default action is to clone (copy) /sys and below to /tmp/sys . Only that
-file system instance is copied (e.g. not /sys/kernel/debug and below).
-Hidden files are ignored. Only a maximum of 256 bytes in regular files is
-copied. Symbolic links (symlinks), even dangling ones, are also copied but
-not followed. Most of these defaults can be changed by command line options.
+Rather than report every issue to stderr, this utility collects
+statistics (both successes and failures) and will output a summary before
+exiting if the \fI\-\-statistics\fR option is given. By default only the
+first 256 bytes of regular files found in the source are copied to the
+destination. That default size can be changed with the \fI\-\-reglen=RLEN\fR
+option. This is a practical matter as cloning the complete contents
+of /dev/sdb (say) would probably cause a file system full error.
+Symbolic links (symlinks), even dangling ones, are also copied but, in most
+cases, not followed. The process of collecting information from pseudo file
+systems is termed as "data\-mining" below.
 .PP
-Why do this? The author's motivation is USB\-C PD information appearing in
-sysfs thanks to the ucsi_acpi driver in the Linux kernel. At time of writing
-this driver (or ACPI) is unstable, so (dis)connecting a USB\-C cable is often
-enough to freeze that driver (which rmmod followed by modprobe sometimes
-fixes). Trying to build tools on such an unstable platform is frustrating. So
-when a USB\-C PD configuration of interest is correctly reflected in sysfs,
-best to clone it, then point the tools under development at the copy. That
-copy may have come from a different machine (transferred via tar+scp or
-rsync(1) ). Life would be simpler if tools like lsusb and lspci could be
-taught to look somewhere other than /sys for the data\-mining they currently
-do. Unless such tools are changing something, they don't need to be looking
-at a real sysfs instance, something that has the same structure and
-attributes (perhaps a little outdated) will do.
+Why do this? Various utilities access Linux pseudo file systems to provide
+the user information about the current state of hardware and resource usage.
+Some of these utilities, such as lsblk, lscpu, lsmem and lsscsi, have a:
+    \-\-sysroot=AR_PT
+.br
+option that allows them to data\-mine in an alternate root path. For example
+lsscsi usually data\-mines in /sys and /dev but with this invocation:
+    lsscsi \-\-sysroot=/tmp
+.br
+it will data\-mine in /tmp/sys and /tmp/dev instead. The purpose of
+clone_pseudo_fs is to prepare /tmp/sys and /tmp/dev so that this will give
+useful results. Note that this facility allows time and location shifting.
+For example the contents of /tmp/sys and /tmp/dev may be from another
+machine that has some issues (e.g. the other machine is in production and
+is running slowly).
 .PP
-Many horrible things can happen when copying subtrees, especially when
+Many horrible things can happen when copying subtrees, for example when
 \fISPATH\fR contains \fIDPATH\fR or vice versa (e.g. cloning /tmp/sys
 to /tmp/sys/a2). There are some sanity checks but using the
 \fI\-\-max\-depth=MAXD\fR is probably the best defence. Note that some pseudo
 file systems have "waiting" reads and to cope with these the
 \fI\-\-wait=MS_R\fR option should be used (e.g. when cloning tracefs usually
-found under /sys/kernel/trace ). If a pseudo file system has only a few
+found under /sys/kernel/tracing ). If a pseudo file system has only a few
 waiting reads (e.g. procfs has one at /proc/kmsg) then the
 \fI\-\-exclude=PATT\fR can be used to bypass the trouble makers.
 .PP
 Calling this utility a "snapshot" copy would be a bit of a stretch as it
-takes between 5 and 10 seconds on a recent laptop. And that is more than
-enough time for the kernel to change many settings within sysfs. Sysfs is
-a "read\-only" file system only from the user space perspective, underneath
-the kernel may be busily changing things, adding some directories, deleting
-others. The recursive directory scan (by default of /sys) uses C++17
+takes between 5 and 10 seconds to clone sysfs on a recent laptop. And that
+is more than enough time for the kernel to change many settings within sysfs.
+Sysfs is a "read\-only" file system only from the user space perspective,
+underneath the kernel may be busily changing things, adding some directories,
+deleting others. The recursive directory scan (by default of /sys) uses C++17
 filesystem library machinery and seems quite solid. That said, it is probably
 best to keep a system relatively "quiet" while a clone operation of /sys is
 taking place.
@@ -58,9 +68,8 @@ The utility can be called by a non\-root user with workable results. Most
 data\-mining utilities in the "ls*" family are typically designed to obtain
 useful results without needing root permissions. So a clone of /sys by a
 non\-root user, for example, may be used as alternative input to the "ls*"
-family if they have a "\-\-sysroot DIR" or "\-\-sysfsroot=DIR" option. Also
-calling this utility as the root user will take longer and often run into
-more "waiting" reads.
+family if they have a "\-\-sysroot=DIR" option. Also calling this utility as
+the root user will take longer and often run into more "waiting" reads.
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
 are arranged in alphabetical order based on the long option name. Hyphenated
@@ -85,6 +94,8 @@ system while it is being cloned, the next best approach is to reduce the time
 taken to scan \fISPATH\fR. As a rough estimation, scanning directories is
 faster than opening files and is definitely faster than creating new files
 and directories.
+.br
+When the \fI\-\-prune=T_PT\fR option is given this option is set implicitly.
 .TP
 \fB\-R\fR, \fB\-\-dereference\fR=\fISYML\fR
 \fISYML\fR is assumed to be a symbolic link under \fISPATH\fR. During the
@@ -104,11 +115,10 @@ If \fISYML\fR targets a node that is neither a directory nor a regular
 file then this option has no effect. If \fISYML\fR is a "dangling" symlink
 then a clone of that dangling symlink will appear in the output.
 .br
-This option may be given many times, any \fISYML\fR that does not match a
-symlink under \fISPATH\fR is discarded, as are duplicates. As soon as a match
-is found on a \fISYML\fR argument then that value is discarded from the
-list (of \fISYML\fRs) that each symbolic link in the scan is checked
-against. This will stop symlink "cycles" causing infinite recursion.
+This option may be given many times and any duplicates are ignored. As soon
+as a match is found on a \fISYML\fR argument then that value is discarded
+from the list (of \fISYML\fRs) that each source node is checked against.
+This will stop symlink "cycles" causing infinite recursion.
 .br
 Notice that this option (\fI\-\-dereference=SYML\fR]) only acts on exact
 matches on symlinks while the \fI\-\-exclude=PATT\fR option accepts patterns
@@ -117,7 +127,8 @@ that are subject to "glob" expansion and can match any type of node.
 The long option \fI\-\-dereference=SYML\fR may be shortened to
 \fI\-\-deref=SYML\fR .
 .br
-For more information see the DEREFERENCE AND EXCLUDE section below.
+For more information see the DEREFERENCE AND EXCLUDE and ORDER OF EVALUATION
+sections below.
 .TP
 \fB\-d\fR, \fB\-\-destination\fR=\fIDPATH\fR
 \fIDPATH\fR is the destination of the clone (copy) operation. If it already
@@ -144,13 +155,14 @@ the subtree under it is not scanned so it is not cloned. In this context
 \fIPATT\fR stands for "pattern" and the glob(3) system library call is used
 to match zero or more file locations that will be excluded. Note that
 \fIPATT\fR may need to be surrounded by single or double quotes to stop
-shell expansion.
+shell expansion. Double quotes are used in the examples in this manpage as
+the rendering of manpages does weird things with single quotes.
 .br
 This option may be given more than once. For example if trying to clone
 procfs, then excluding /proc/kmsg is needed, plus excluding all the
-process/task directories may help. For example: \-\-exclude='/proc/[0\-9]*'
+process/task directories may help. For example: \-\-exclude="/proc/[0\-9]*"
 \-\-exclude=/proc/self . Note that quotes are not needed around
-/proc/self but are needed around '/proc/[0\-9]*' .
+/proc/self but are needed around "/proc/[0\-9]*" .
 .br
 Beware: a trailing slash on \fIPATT\fR is a different glob to the same
 \fIPATT\fR without that trailing slash. In most cases there should not be
@@ -237,6 +249,12 @@ In this utility the \-xdev functionality is the default action. Hence this
 option, \fI\-\-no\-xdev\fR, allows the recursive directory scan to span
 multiple file system instances. This option should be used with care as
 different file systems often have different characteristics.
+.br
+For example under the sysfs (pseudo) file system instance (mounted usually
+at /sys) there are several different file systems usually mounted. These
+are debugfs (/sys/kernel/debug) and tracefs (/sys/kernel/tracing). Non\-root
+users cloning sysfs need not worry about either of those file system
+instances because both require root permissions to enter.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIT_PT\fR
 where \fIT_PT\fR is an abbreviation for "Take PaTh". \fIT_PT\fR should be a
@@ -248,10 +266,11 @@ symlinks will be placed in the output, even if their target is dangling. If
 the symlink target is a directory then its contents will also be placed in
 the output. Also the nodes in the canonical path between \fISPATH\fR and
 each matching \fIT_PT\fR node (plus each symlink target directory) will
-appear in the output. Any node under \fISPATH\fR _not_ mentioned in this
-paragraph is
+appear in the output. Any node under \fISPATH\fR
+.B not
+mentioned in this paragraph is
 .B excluded
-from the output (i.e. under \fIDPATH\fR).
+from the output (i.e. what is copied to \fIDPATH\fR).
 .br
 Another way of describing the action of this option is that the output will
 contain a directory matching each \fIT_PT\fR, its children, grandchildren,
@@ -269,8 +288,10 @@ sections below.
 regular file found in \fISPATH\fR to the corresponding file in \fIDPATH\fR.
 The default value is 256. The minimum value the \fIRLEN\fR can be is 0 and
 values over a million may run into ENOMEM errors. This action means that this
-utility is not a good candidate for making a perfect clone (i.e. preserving
-all user data) of a general purpose storage file system.
+utility is
+.B not
+suitable for making a perfect clone (i.e. preserving all user data) of a
+general purpose storage file system.
 .br
 If \fIRLEN\fR is 0 then regular files under \fIDPATH\fR will be created (if
 permitted) but will be of zero length. If that regular file previously
@@ -278,12 +299,14 @@ existed under \fIDPATH\fR and had non\-zero length, then its length will now
 be truncated to 0.
 .br
 Note that in pseudo file systems the st_size member returned by invoking
-the stat(2) system call on a regular file is misleading. The data read from
-a regular file in this context is effectively created at the point that the
-read(2) system call is invoked and is not known before that point. Due to
-this action the byte length shown 'ls \-l' inside a pseudo file system is
-wrong (often 0 or 4096). This leads to programs like tar generating this
-type of curious warning: "File shrank by 4095 bytes; padding with zeros".
+the stat(2) system call on a regular file is
+.B misleading.
+The data read from a regular file in this context is effectively determined
+at the point that the read(2) system call is invoked and is not known before
+that point. Due to this action the byte length shown "ls \-l" inside a pseudo
+file system is wrong (often 0 or 4096). This leads to programs like tar
+generating this type of curious warning: "File shrank by 4095 bytes; padding
+with zeros".
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
 \fISPATH\fR is the source of the clone (copy) operation. \fISPATH\fR must
@@ -301,12 +324,12 @@ The long option \fI\-\-source=SPATH\fR may be shortened to
 .TP
 \fB\-S\fR, \fB\-\-statistics\fR
 when this option is given over 40 counters accumulate data that is output
-to stdout once the clone operation has been completed (or hits a serious
-error). These counters are divided into two groups: the first group is
-only collecting data from the recursive directory scan of \fISPATH\fR. The
-second group collects data from \fIDPATH\fR operations mainly copying
-data from regular files. If the \fI\-\-no\-dst\fR option is also given
-then only the first group is output.
+to stdout once the clone operation has been completed (or hits a
+non\-recoverable error). These counters are divided into two groups: the
+first group is only collecting data from the recursive directory scan of
+\fISPATH\fR. The second group collects data from \fIDPATH\fR operations
+mainly copying data from regular files. If the \fI\-\-no\-dst\fR option is
+also given then only the first group is output.
 .br
 The long option \fI\-\-statistics\fR may be shortened to \fI\-\-stats\fR .
 .TP
@@ -397,9 +420,9 @@ how that information could be useful for remote debugging. However (there is
 always a 'but') the lsblk utility inspects the /proc/self/mountinfo file
 and 'self' is a symbolic link to the PID of the process that is running
 this utility. So one approach is to exclude all paths that start with a
-digit at the top level (e.g. '/proc/1/') and dereference the symbolic
-link '/proc/self/'.  The invocation might look like this:
-    clone_pseudo_fs \-s /proc \-d /tmp/pr \-e '/proc/[0\-9]*' \-r /proc/self
+digit at the top level (e.g. "/proc/1/") and dereference the symbolic
+link "/proc/self/".  The invocation might look like this:
+    clone_pseudo_fs \-s /proc \-d /tmp/pr \-e "/proc/[0\-9]*" \-R /proc/self
 .PP
 For sake of argument assume 'self' is a symbolic link to PID 1234 so that
 would be /proc/1234 . But that would match the exclude pattern, do they
@@ -409,12 +432,12 @@ expanding that glob, in this case this utility expands it.]
 No, they do not cancel out, /tmp/pr/1234/* will not appear but /tmp/pr/self/*
 will appear and the '*' will be the same sub\-tree. However something has
 been lost: the fact that self's PID was 1234 . Although this may not be
-important in this case (e.g. to trick lsblk utility) it may be important in
-other cases. For this reason, clone_pseudo_fs creates a file in the
+important in this case (e.g. to trick the lsblk utility) it may be important
+in other cases. For this reason, clone_pseudo_fs creates a file in the
 destination under the \fISYML\fR directory. This file is called
-.B
-0_symlink_source_target and it contains the source's symbolic link target
-name. In this case the contents of that file would be '/proc/1234' .
+.B 0_source_symlink_target_path
+and it contains the source's symbolic target name, including its source
+path. In this case the contents of that file would be "/proc/1234" .
 .SH PRUNING
 The term "prune" is used in the positive sense in this utility, basically
 the opposite action of what the exclude options do. To emphasise this
@@ -460,7 +483,7 @@ There is a difference in the way \fI\-\-exclude=PATT\fR and
 into a list of matching node paths before the scan commences. By the
 time the scan reaches that part of the hierarchy tree, that node may
 have been removed. This happens often in procfs with this option:
-    \-\-exclude='/proc/[0\-9]*'
+    \-\-exclude="/proc/[0\-9]*"
 .br
 which is trying to exclude all PIDs (process IDs). A few such PID directories
 may be found in the output, representing the processes that were created
@@ -595,7 +618,7 @@ may be useful getting a snapshot of, processes (task, threads) running when
 the clone was taken doesn't seem particularly worthwhile. So here is an
 invocation to exclude those PID directories:
     $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
-\-\-exclude='/proc/[0\-9]*' \-\-deref=/proc/self \-\-stats
+\-\-exclude="/proc/[0\-9]*" \-\-deref=/proc/self \-\-stats
 .PP
 The first exclude option needs to be surrounded by quotes to stop the shell
 doing a glob expansion before clone_pseudo_fs is called. The second exclude
@@ -605,7 +628,7 @@ non\-root user but seem to wait forever when invoked with root permissions.
 The reason is that /proc/kmsg is a waiting read. So the following invocation
 will work better:
     $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
-\-\-exclude='/proc/[0\-9]*' \-\-wait=0 \-\-stats
+\-\-exclude="/proc/[0\-9]*" \-\-wait=0 \-\-stats
 .PP
 Rather than exclude /proc/kmsg explicitly, using \-\-wait=0 will catch
 all "waiting" reads. The statistics output will show one source poll timeout
@@ -617,7 +640,7 @@ sysfs and procfs under the argument given to that option. So if
 \-\-sysroot=/tmp then lsblk expects to find /tmp/sys and /tmp/proc
 appropriately populated. That can be done with this sequence:
     $ clone_pseudo_fs \-\-src=/proc \-\-dst=/tmp/proc
-\-\-exclude='/proc/[0\-9]*' \-\-deref=/proc/self \-\-reglen=8192
+\-\-exclude="/proc/[0\-9]*" \-\-deref=/proc/self \-\-reglen=8192
 .PP
     $ clone_pseudo_fs \-\-src=/sys \-\-dst=/tmp/sys
 .PP
@@ -630,8 +653,9 @@ column. Notice that some utilities taking long options that have an
 associated argument can optionally take an "=" between the option and its
 argument (e.g. this utility) while others don't (e.g. lsblk and lsmem).
 .PP
-Probably the best examples can be found under the examples directory of
-the clone_pseudo_fs source package.
+Probably the best examples can be found under the
+.B examples
+directory of the clone_pseudo_fs source package.
 .SH AUTHOR
 Written by Douglas Gilbert
 .SH "REPORTING BUGS"

@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231213 [svn: r25]";
+static const char * const version_str = "0.90 20231218 [svn: r26]";
 
 #include <iostream>
 #include <fstream>
@@ -247,7 +247,7 @@ struct inmem_regular_t : inmem_base_t {
 
     bool read_found_nothing { };
 
-    bool always_use_contents { };  // set when symlink_src_tgt file inserted
+    bool always_use_contents { };  // set when src_symlink_tgt_path inserted
 
     sstring get_filename() const noexcept { return filename; }
 
@@ -513,7 +513,7 @@ static const sstring sysfs_root { "/sys" };   // default source (normalized)
 static const sstring def_destin_root { "/tmp/sys" };
 static const int stat_perm_mask { 0x1ff };         /* bottom 9 bits */
 static const int def_file_perm { S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH };
-static const char * symlink_src_tgt { "0_symlink_source_target" };
+static const char * src_symlink_tgt_path { "0_source_symlink_target_path" };
 
 static const auto dir_opt { fs::directory_options::skip_permission_denied };
 
@@ -1096,11 +1096,11 @@ xfr_vec2file(const std::vector<uint8_t> & v, const sstring & destin_file,
     int num2;
     // need S_IWUSR set if non-root and want later overwrite
     mode_t from_perms { (st_mode | def_file_perm) & stat_perm_mask };
-   // std::vector element are continuous in memory
-    const uint8_t * bp { (num > 0) ? &v[0] : nullptr };
+    const uint8_t * bp;
     const char * destin_nm { destin_file.c_str() };
     struct stats_t * q { &op->mutp->stats };
 
+    bp = (v.empty() ? nullptr : &v[0]);
     if (op->destin_all_new) {
         destin_fd = creat(destin_nm, from_perms);
         if (destin_fd < 0) {
@@ -1722,7 +1722,7 @@ symlink_clone_work(const fs::path & pt, const fs::path & prox_pt,
                 return {ec, false};
             }
             const fs::path deep_d_pt { ongoing_d_pt / d_lnk_pt };
-            const auto d_sl_tgt { d_lnk_pt / symlink_src_tgt };
+            const auto d_sl_tgt { d_lnk_pt / src_symlink_tgt_path };
             const auto ctspt { s(canon_s_sl_targ_pt) + "\n" };
             const char * ccp { ctspt.c_str() };
             const uint8_t * bp { reinterpret_cast<const uint8_t *>(ccp) };
@@ -2224,7 +2224,7 @@ symlink_cache_src(const fs::path & pt, const short_stat & a_shstat,
                 short_stat b_shstat { a_shstat };
                 b_shstat.st_mode &= ~stat_perm_mask;
                 b_shstat.st_mode |= def_file_perm;
-                inmem_regular_t a_reg(symlink_src_tgt, b_shstat);
+                inmem_regular_t a_reg(src_symlink_tgt_path, b_shstat);
 
                 a_reg.contents.swap(v);
                 a_reg.always_use_contents = true;
@@ -3932,10 +3932,14 @@ main(int argc, char * argv[])
         }
     }
     if ((op->want_stats == 0) && (op->destination_given == false) &&
-        (op->source_given == false) && (op->no_destin == false) && (res = 0))
-        scout << "Successfully cloned " << sysfs_root << " to "
-              << def_destin_root << "\n";
-
+        (op->source_given == false) && (op->no_destin == false)) {
+        if (res == 0)
+            scout << "Successfully cloned " << sysfs_root << " to "
+                  << def_destin_root << "\n";
+        else
+            scout << "Problem cloning " << sysfs_root << " to "
+                  << def_destin_root << "\n";
+    }
     if ((! op->want_stats) && (q->num_scan_failed > 0)) {
         pr_err(-1, "Warning: scan of source truncated, may need to "
                "re-run{}\n", l());

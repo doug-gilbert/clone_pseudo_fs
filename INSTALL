@@ -73,6 +73,7 @@ in nroff format. The sequence of commands to build and install is:
     cmake --build .
     cmake --install .
 
+The trailing "." is required, meaning look in the current directory.
 The last cmake invocation needs root permissions. 'make clean' does
 the same thing as it does in autotools. There is no 'make distclean'
 so the above sequence leaves a lot of garbage "on the floor".
@@ -90,7 +91,11 @@ install_manifest.txt file that can be used to remove the files
 installed like this:
     xargs rm < install_manifest.txt
 
+A static executable can be selected with the first cmake like this:
+    cmake -D BUILD_SHARED_LIBS=off .
+The default is to build the executable using shared libraries.
+
 Suggestions welcome.
 
 Douglas Gilbert
-13 December 2023
+15 December 2023

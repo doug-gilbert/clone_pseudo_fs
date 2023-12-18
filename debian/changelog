@@ -2,5 +2,5 @@ clone-pseudo-fs (0.90-0.1) unstable; urgency=low
 
   * original package name contains underscores not dashes
 
- -- Douglas Gilbert <dgilbert@interlog.com>  Wed, 13 Dec 2023 01:00:00 -0500
+ -- Douglas Gilbert <dgilbert@interlog.com>  Mon, 18 Dec 2023 12:00:00 -0500
 
