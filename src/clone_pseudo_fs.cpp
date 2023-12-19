@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231218 [svn: r26]";
+static const char * const version_str = "0.90 20231218 [svn: r27]";
 
 #include <iostream>
 #include <fstream>
@@ -511,8 +511,8 @@ static const struct option long_options[] {
 // directory paths should not have a trailing '/' apart from the root!
 static const sstring sysfs_root { "/sys" };   // default source (normalized)
 static const sstring def_destin_root { "/tmp/sys" };
-static const int stat_perm_mask { 0x1ff };         /* bottom 9 bits */
-static const int def_file_perm { S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH };
+static const mode_t stat_perm_mask { 0x1ff };         /* bottom 9 bits */
+static const mode_t def_file_perm { S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH };
 static const char * src_symlink_tgt_path { "0_source_symlink_target_path" };
 
 static const auto dir_opt { fs::directory_options::skip_permission_denied };

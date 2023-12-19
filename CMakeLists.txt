@@ -29,6 +29,11 @@ include(GNUInstallDirs)
 file(ARCHIVE_CREATE OUTPUT clone_pseudo_fs.8.gz PATHS doc/clone_pseudo_fs.8 FORMAT raw COMPRESSION GZip)
 install(FILES clone_pseudo_fs.8.gz DESTINATION "${CMAKE_INSTALL_MANDIR}/man8")
 
+if ( ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" )
+    MESSAGE( ">> Detected FreeBSD" )
+    target_include_directories( clone_pseudo_fs PRIVATE /usr/local/include )
+endif ( )
+
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
