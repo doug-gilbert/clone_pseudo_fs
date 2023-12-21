@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231218 [svn: r27]";
+static const char * const version_str = "0.90 20231220 [svn: r28]";
 
 #include <iostream>
 #include <fstream>
@@ -1095,7 +1095,8 @@ xfr_vec2file(const std::vector<uint8_t> & v, const sstring & destin_file,
     int num { static_cast<int>(v.size()) };
     int num2;
     // need S_IWUSR set if non-root and want later overwrite
-    mode_t from_perms { (st_mode | def_file_perm) & stat_perm_mask };
+    mode_t from_perms
+        { static_cast<mode_t>((st_mode | def_file_perm) & stat_perm_mask) };
     const uint8_t * bp;
     const char * destin_nm { destin_file.c_str() };
     struct stats_t * q { &op->mutp->stats };
@@ -1231,7 +1232,8 @@ static int
 xfr_reg_inmem2file(const inmem_regular_t & ireg, const sstring & destin_file,
                    const struct opts_t * op) noexcept
 {
-    mode_t from_perms { ireg.shstat.st_mode & stat_perm_mask };
+    mode_t from_perms
+        { static_cast<mode_t>(ireg.shstat.st_mode & stat_perm_mask) };
 
     return xfr_vec2file(ireg.contents, destin_file, from_perms, op);
 }
@@ -2231,7 +2233,7 @@ symlink_cache_src(const fs::path & pt, const short_stat & a_shstat,
                 l_odirp->add_to_sdir_v(a_reg);
                 ec = cache_src(l_odirp, canon_s_targ_pt, op);
                 if (ec)
-                    return {ec, true};
+                    return {ec, false};         /* was true dpg 20231219 */
             }
             l_odirp = prev_odirp;
         } else if (s_targ_ftype == fs::file_type::regular) {
@@ -3556,7 +3558,7 @@ main(int argc, char * argv[])
     }
     if (! fs::is_directory(src_fstatus)) {
         pr_err(-1, "expected SPATH: {} to be a directory, or a symlink to "
-               "a directory{}\n", s(op->source_pt));
+               "a directory\n", s(op->source_pt));
         return 1;
     }
 

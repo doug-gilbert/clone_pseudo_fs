@@ -7,7 +7,7 @@
 # suitable for this invocation:
 #    lsscsi --sysroot=/tmp
 #
-# Root permissions are needed to clone the char and block node in
+# Root permissions are needed to clone the char and block nodes in
 # /dev so that those nodes appear in /tmp/dev
 
 set -x #echo on
@@ -21,5 +21,6 @@ clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
 # to fetch SCSI devices as well as NVMe devices:
 # -p /sys/class/scsi_device/ -p /sys/class/scsi_generic/ -p /sys/bus/scsi
 
-
-clone_pseudo_fs -s /dev -d /tmp/dev -w 0 $@
+# Now clone /dev to /tmp/dev . Note that nodes like /dev/null will not
+# be cloned to /tmp/dev/null unless root permission are active.
+clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
