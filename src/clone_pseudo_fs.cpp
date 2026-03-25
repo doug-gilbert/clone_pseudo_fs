@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Douglas Gilbert.
+ * Copyright (c) 2023-2026 Douglas Gilbert.
  * All rights reserved.
  * Use of this source code is governed by a BSD-style
  * license that can be found in the BSD_LICENSE file.
@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20231220 [svn: r28]";
+static const char * const version_str = "0.90 20260325 [svn: r29]";
 
 #include <iostream>
 #include <fstream>

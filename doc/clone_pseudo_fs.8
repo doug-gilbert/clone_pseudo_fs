@@ -1,4 +1,4 @@
-.TH CLONE_PSEUDO_FS "8" "December 2023" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "March 2026" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
 clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
@@ -11,14 +11,14 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 [\fI\-\-verbose\fR] [\fI\-\-version\fR] [\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
-This is a Linux command line utility specialized for cloning pseudo file
-systems to 'normal' file storage. The default action of this utility is
+This is a Linux command line utility specialized for cloning a pseudo file
+system to 'normal' file storage. The default action of this utility is
 to clone /sys (usually holding the sysfs pseudo file system) to /tmp/sys .
 Without defaults that is equivalent to:
     clone_pseudo_fs \-\-source=/sys \-\-destination=/tmp/sys
 .PP
 Rather than report every issue to stderr, this utility collects
-statistics (both successes and failures) and will output a summary before
+statistics (of both successes and failures) and will output a summary before
 exiting if the \fI\-\-statistics\fR option is given. By default only the
 first 256 bytes of regular files found in the source are copied to the
 destination. That default size can be changed with the \fI\-\-reglen=RLEN\fR
@@ -661,7 +661,7 @@ Written by Douglas Gilbert
 .SH "REPORTING BUGS"
 Report bugs to <dgilbert at interlog dot com>.
 .SH COPYRIGHT
-Copyright \(co 2023 Douglas Gilbert
+Copyright \(co 2023\-2026 Douglas Gilbert
 .br
 This software is distributed under a BSD\-2\-Clause license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

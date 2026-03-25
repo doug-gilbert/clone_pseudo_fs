@@ -50,4 +50,6 @@ clone_pseudo_fs_SOURCES = clone_pseudo_fs.cpp \
 clone_pseudo_fs_LDADD = @FMT_LDADD@
 
 distclean-local:
-	rm -rf .deps
+	rm -rf \
+	  .deps \
+	  Makefile.in
