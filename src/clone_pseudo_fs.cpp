@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20260325 [svn: r29]";
+static const char * const version_str = "0.90 20260403 [svn: r30]";
 
 #include <iostream>
 #include <fstream>
@@ -458,6 +458,7 @@ struct opts_t {
     bool no_xdev;           // -N : 'find(1) -xdev' means don't scan outside
                             // original fs so no_xdev is a double negative.
                             // (default for this utility: don't scan outside)
+    // bool other_fs
     unsigned int reglen;    // maximum bytes read from regular file
     unsigned int wait_ms;   // to cope with waiting reads (e.g. /proc/kmsg)
     int cache_op_num;       // -c : cache SPATH to meomory then ...
@@ -496,6 +497,8 @@ static const struct option long_options[] {
     {"no_dst", no_argument, 0, 'D'},
     {"no-xdev", no_argument, 0, 'N'},
     {"no_xdev", no_argument, 0, 'N'},
+    {"other_fs", no_argument, 0, 'O'},
+    {"other-fs", no_argument, 0, 'O'},
     {"prune", required_argument, 0, 'p'},
     {"reglen", required_argument, 0, 'r'},
     {"source", required_argument, 0, 's'},
@@ -610,9 +613,12 @@ static const char * const usage_message1 {
     "means\n"
     "                                there is no limit)\n"
     "    --no-dst|-D        ignore destination, just do SPATH scan\n"
-    "    --no-xdev|-N       clone of SPATH may span multiple file systems "
-    "(def:\n"
-    "                       stay in SPATH's containing file system)\n"
+    "    --no-xdev|-N       permit clone of SPATH to span multiple file "
+    "systems\n"
+    "                       (def: stay in SPATH's containing file system)\n"
+    "    --other-fs|-O      same action as --no-xdev: allows other file "
+    "systems\n"
+    "                       under SPATH to be copied\n"
     "    --prune=T_PT|-p T_PT    output will only contain files exactly "
     "matching\n"
     "                            or under T_PT (take path). Symlinks are "
@@ -636,11 +642,14 @@ static const char * const usage_message2 {
     "By default, this utility will clone /sys to /tmp/sys . The resulting "
     "subtree\nis a frozen snapshot that may be useful for later analysis. "
     "Hidden files\nare skipped and symlinks are created, even if dangling. "
-    "The default is only\nto copy a maximum of 256 bytes from regular files."
-    " If the --cache option\nis given, a two pass clone is used; the first "
-    "pass creates an in memory\ntree. The --dereference=SYML , "
-    "--exclude=PATT and --prune=T_PT options\ncan be invoked multiple "
-    "times.\n"
+    "The default is only\nto copy a maximum of 256 bytes from regular "
+    "files. For /sys in Linux often\nseveral other pseudo file systems are "
+    "grafted into it (e.g. debugfs at\n/sys/kernel/debug) and they won't "
+    "be copied unless the --other-fs option\nis given.\n"
+    "If the --cache option is given, a two pass clone is used; the first "
+    "pass\ncreates an in-memory tree built from scanning SPATH. The\n"
+    "--dereference=SYML , --exclude=PATT and --prune=T_PT options can be\n"
+    "invoked multiple times.\n"
 };
 
 static void
@@ -2248,7 +2257,7 @@ process_as_symlink:
 }
 
 // Tracking a directory recursive descent iterator for the purposes of
-// building an in-memory hierarchial representation is relatively easy
+// building an in-memory hierarchical representation is relatively easy
 // until the iterator goes back up (i.e. towards the root) 2 or more
 // directories. The algorithm here is to split the parent path (par_pt)
 // up till source root path (osrc_pt) into its component parts and then
@@ -3330,7 +3339,7 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
 
     while ( true ) {
         int option_index { 0 };
-        int c { getopt_long(argc, argv, "cd:De:E:hHm:Np:r:R:s:SvVw:x",
+        int c { getopt_long(argc, argv, "cd:De:E:hHm:NOp:r:R:s:SvVw:x",
                             long_options, &option_index) };
         if (c == -1)
             break;
@@ -3390,6 +3399,8 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
             }
             break;
         case 'N':
+        case 'O':       /* less cryptic CL option for continue scanning
+                         * beyond starting file system */
             op->no_xdev = true;
             break;
         case 'p':

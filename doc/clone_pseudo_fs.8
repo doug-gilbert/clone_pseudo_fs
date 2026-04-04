@@ -1,4 +1,4 @@
-.TH CLONE_PSEUDO_FS "8" "March 2026" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "April 2026" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
 clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
@@ -6,9 +6,10 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 [\fI\-\-cache\fR] [\fI\-\-dereference=SYML\fR] [\fI\-\-destination=DPATH\fR]
 [\fI\-\-exclude=PATT\fR] [\fI\-\-excl\-fn=EFN\fR]  [\fI\-\-extra\fR]
 [\fI\-\-help\fR] [\fI\-\-hidden\fR] [\fI\-\-max\-depth=MAXD\fR]
-[\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR] [\fI\-\-prune=T_PT\fR]
-[\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR] [\fI\-\-statistics\fR]
-[\fI\-\-verbose\fR] [\fI\-\-version\fR] [\fI\-\-wait=MS_R\fR]
+[\fI\-\-no\-dst\fR] [\fI\-\-no\-xdev\fR] [\fI\-\-other\-fs\fR]
+[\fI\-\-prune=T_PT\fR] [\fI\-\-reglen=RLEN\fR] [\fI\-\-source=SPATH\fR]
+[\fI\-\-statistics\fR] [\fI\-\-verbose\fR] [\fI\-\-version\fR]
+[\fI\-\-wait=MS_R\fR]
 .SH DESCRIPTION
 .\" Add any additional description here
 This is a Linux command line utility specialized for cloning a pseudo file
@@ -28,9 +29,20 @@ Symbolic links (symlinks), even dangling ones, are also copied but, in most
 cases, not followed. The process of collecting information from pseudo file
 systems is termed as "data\-mining" below.
 .PP
-Why do this? Various utilities access Linux pseudo file systems to provide
-the user information about the current state of hardware and resource usage.
-Some of these utilities, such as lsblk, lscpu, lsmem and lsscsi, have a:
+To simplify use, including some of the pitfalls discussed below, the default
+action is
+.B not
+to scan into other file systems. For example in Linux /sys, a separate
+debugfs (pseudo file system) is often mounted at /sys/kernel/debug. So with
+no options given that directory (/tmp/sys/kernel/debug) will be created
+under \fIDPATH\fR but will contain no children. To scan into other file
+systems (other than the file system that the file at \fISPATH\fR belongs to)
+use the \fI\-\-other\-fs\fR or \fI\-\-no\-xdev\fR option (they have the same
+effect).
+.PP
+Why do such a deep copy? Various utilities access Linux pseudo file systems
+to provide the user information about the current state of hardware and
+resource usage. Some of these utilities, such as lsblk, lscpu, lsmem and lsscsi, have a:
     \-\-sysroot=AR_PT
 .br
 option that allows them to data\-mine in an alternate root path. For example
@@ -239,11 +251,12 @@ option.
 This option may also be used with the \fI\-\-cache\fR option in which case
 the first pass creating the in\-memory tree occurs but the second pass does
 not occur.
+.TP
 \fB\-N\fR, \fB\-\-no\-xdev\fR
 the find(1) command has an option called \-xdev which will stop its recursive
-directory scan leaving the file system instance that it start with. That name
-probably comes from the struct stat:st_dev field that is used to implement
-its \-xdev functionality.
+directory scan leaving the file system instance that it starts with. That
+name probably comes from the struct stat:st_dev field that is used to
+implement its \-xdev functionality.
 .br
 In this utility the \-xdev functionality is the default action. Hence this
 option, \fI\-\-no\-xdev\fR, allows the recursive directory scan to span
@@ -255,6 +268,12 @@ at /sys) there are several different file systems usually mounted. These
 are debugfs (/sys/kernel/debug) and tracefs (/sys/kernel/tracing). Non\-root
 users cloning sysfs need not worry about either of those file system
 instances because both require root permissions to enter.
+.TP
+\fB\-O\fR, \fB\-\-other\-fs\fR
+This option has the same action as \fI\-\-no\-xdev\fR. The long option name
+is a little less cryptic and a little more indicative of the expanded
+scanning action. Again the default is to not scan outside the file system
+that the file at \fISPATH\fR belongs to.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIT_PT\fR
 where \fIT_PT\fR is an abbreviation for "Take PaTh". \fIT_PT\fR should be a
@@ -512,7 +531,7 @@ marked in the in\-memory representation are transferred to \fIDPATH\fR.
 .SH "CLONING SYSFS"
 An instance of the sysfs file pseudo file system is typically mounted under
 the /sys directory in Linux. Many utilities and tools, like systemd, expect
-sysfs in that location that Linux would probably be inoperable if sysfs is
+sysfs in that location and Linux would probably be inoperable if sysfs is
 not present at that location.
 .PP
 The defaults of this utility are chosen so that invoking this utility without
@@ -672,5 +691,6 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 .B lsblk(8),
 .B lsmem(8),
 .B lscpu(8),
+.B find(1),
 .B read(2), stat(2) (Linux system calls),
 .B C++17 and later: filesystem library
