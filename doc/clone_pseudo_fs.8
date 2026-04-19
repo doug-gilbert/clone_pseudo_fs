@@ -627,6 +627,14 @@ issue.
 .PP
 When cloning devfs (i.e. under /dev ) as a non\-root user, no block or
 character special file (device) will be created.
+.PP
+Once a snapshot is taken of sysfs, other tools can be used to examine the
+now static represention (e.g. using find(1) on /tmp/sys and below). To
+get a more general overview of the structure and a sanitized view of the
+contents of all regular files found, the ls_name_value utility might be
+helpful. ls_name_value data\-mines directories up to a maxdepth of 2. It
+also shows symlinks and their targets which make navigating sysfs a bit
+like a maze.
 .SH EXAMPLES
 When cloning procfs, the recursive directory scan will sometimes fail and
 exit while scanning one of the "process identify" (PID) directories which
@@ -685,7 +693,8 @@ Copyright \(co 2023\-2026 Douglas Gilbert
 This software is distributed under a BSD\-2\-Clause license. There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 .SH "SEE ALSO"
-.B lsscsi(8),
+.B lsscsi(8 in lsscsi),
+.B ls_name_value(8 in lsscsi),
 .B lspci(8),
 .B lsusb(8),
 .B lsblk(8),

@@ -9,7 +9,7 @@
 # A few tricks required for lsblk which needs a clone of /sys , /dev
 # and /proc . A dereference of the symlink /proc/self is needed
 # as lsblk looks for /proc/self/mountinfo which is a long-ish regular
-# hence the '-r 8192'. Even though the target of /proc/self is a PID
+# file hence the '-r 8192'. Even though the target of /proc/self is a PID
 # directory (e.g. /proc/1234 ), the dereference is applied before the
 # exclude
 

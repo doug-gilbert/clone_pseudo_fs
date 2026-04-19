@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20260403 [svn: r30]";
+static const char * const version_str = "0.90 20260418 [svn: r31]";
 
 #include <iostream>
 #include <fstream>
@@ -36,7 +36,7 @@ static const char * const version_str = "0.90 20260403 [svn: r30]";
 #include <cstdio>               // using sscanf()
 // Unix C headers below
 #include <unistd.h>
-#include <getopt.h>
+#include <getopt.h>             /* non-standard giving pain with AIX */
 #include <fcntl.h>
 #include <glob.h>
 #include <poll.h>
@@ -1804,6 +1804,9 @@ dir_clone_work(const fs::path & pt, fs::recursive_directory_iterator & itr,
                    s(pt));
             itr.disable_recursion_pending();
             ++q->num_oth_fs_skipped;
+            if (op->verbose > 1)
+                pr_err(1, "    start filesystem #: {}, this node's "
+                       "fs #: {}\n", op->mutp->starting_fs_inst, st_dev);
         }
     }
     if (! op->destin_all_new) { /* may already exist */
@@ -2591,6 +2594,10 @@ cache_src(inmem_dir_t * start_dirp, const fs::path & osrc_pt,
                            "{}{}\n", s(pt), l());
                     itr.disable_recursion_pending();
                     ++q->num_oth_fs_skipped;
+                    if (op->verbose > 1)
+                        pr_err(1, "    start filesystem #: {}, this node's "
+                               "fs #: {}\n", omutp->starting_fs_inst,
+                               a_stat.st_dev);
                     /* create this directory as possible mount point */
                 }
             }
