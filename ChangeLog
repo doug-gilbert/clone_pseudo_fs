@@ -1,6 +1,6 @@
 Linux utility for cloning pseudo filesystems like sysfs
 
-Changelog for pre-release clone_pseudo_fs-0.90 [20260420] [svn: r32]
+Changelog for pre-release clone_pseudo_fs-0.90 [20260425] [svn: r33]
   - add --other-fs option, a less cryptic synonym for
     --no-xdev option (span beyond original file system)
   - add --cache option, slightly deeper if invoked twice
