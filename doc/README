@@ -1,0 +1,17 @@
+
+See README in parent directory (top level directory of source package)
+for an explanation. A more general html page needs to be written.
+
+To view the manpage in this directory (rather than the installed one, if
+this package is installed) use:
+    man ./clone_pseudo_fs.8
+
+Syntax checking
+===============
+Use 'mandoc -W style clone_pseudo_fs.8 > /dev/null'
+
+The: 'cannot parse date, using it verbatim: TH February 2019' warning
+can be ignored.
+
+Doug Gilbert
+3rd May 2026

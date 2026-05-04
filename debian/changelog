@@ -1,6 +1,6 @@
-clone-pseudo-fs (0.90-20260419.1) unstable; urgency=low
+clone-pseudo-fs (0.89-9.20260503) unstable; urgency=low
 
   * original package name contains underscores not dashes
 
- -- Douglas Gilbert <dgilbert@interlog.com>  Sun, 19 Apr 2026 12:00:00 -0400
+ -- Douglas Gilbert <dgilbert@interlog.com>  Sun, 03 May 2026 23:00:00 -0400
 

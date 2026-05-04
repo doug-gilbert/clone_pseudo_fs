@@ -28,8 +28,8 @@ cstr(const fs::path & pt)
     static char b[256];
 
     if (sz > 255) {
-	b[255] = '\0';
-	sz = 254;
+        b[255] = '\0';
+        sz = 254;
     }
     memcpy(b, pt.string().c_str(), sz + 1);
     return b;
@@ -50,9 +50,15 @@ print_fs_attrs(const fs::path & pt)
     printf("   root_path(): %s\n", cstr(pt.root_path()));
     printf("       parent_path(): %s\n", cstr(pt.parent_path()));
 
-    printf("   split lexically_normal with iterator:\n");
-    for (const auto & comp : ln_pt)
-	printf("        %s\n", cstr(comp));
+    printf("   split lexically_normal with iterator: ");
+
+    bool first = true;
+    for (const auto & comp : ln_pt) {
+        printf("%s%s\n", (first ? "" : "        "), cstr(comp));
+        first = false;
+    }
+    if (first)
+        printf("\n");
 
     printf("\n");
 }
@@ -62,10 +68,10 @@ main()
 {
 #if 0
     printf(">>> filesystem root-name: %s\n\n",
-	   cstr(fs::current_path().root_name()));
+           cstr(fs::current_path().root_name()));
     printf("\n>>> Components is path %s :\n", cstr(root_name_pt));
     for (const auto & comp : root_name_pt)
-	printf("    %s\n", cstr(comp));
+        printf("    %s\n", cstr(comp));
 #endif
 
     fs::path pt = def_pt;

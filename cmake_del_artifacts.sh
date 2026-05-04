@@ -11,5 +11,8 @@ rm -rf \
 	_CPack_Packages \
 	clone_pseudo_fs \
 	clone_pseudo_fs.8.gz \
-	Makefile
+	Makefile \
+	examples/cmake_install.cmake \
+	examples/CMakeFiles \
+	examples/Makefile
 

@@ -1,4 +1,4 @@
-.TH CLONE_PSEUDO_FS "8" "April 2026" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
+.TH CLONE_PSEUDO_FS "8" "May 2026" "clone_pseudo_fs\-0.90" CLONE_PSEUDO_FS
 .SH NAME
 clone_pseudo_fs \- clone a pseudo file system like sysfs
 .SH SYNOPSIS
@@ -15,7 +15,7 @@ clone_pseudo_fs \- clone a pseudo file system like sysfs
 This is a Linux command line utility intended for cloning a pseudo file
 system to 'normal' file storage. The default action of this utility is
 to clone /sys (usually holding the sysfs pseudo file system) to /tmp/sys .
-Without defaults that is equivalent to:
+So invoking this utility without options (arguments) is equivalent to:
     clone_pseudo_fs \-\-source=/sys \-\-destination=/tmp/sys
 .PP
 Rather than report every issue to stderr, this utility collects
@@ -83,11 +83,18 @@ useful results without needing root permissions. So a clone of /sys by a
 non\-root user, for example, may be used as alternative input to the "ls*"
 family if they have a "\-\-sysroot=DIR" option. Also calling this utility as
 the root user will take longer and often run into more "waiting" reads.
+.PP
+A computer file system can be viewed as a single parent hierarchy with its
+root at the top and its leaves at (or near) the bottom; so an upside down
+tree. With this in mind, to "descend" means to move down the tree towards
+its leaves, while "ascend" means moving up toward its root. This tidy model
+is somewhat spoiled by symbolic links (which add a "snakes and ladders"
+aspect to an otherwise clean model).
 .SH OPTIONS
 Arguments to long options are mandatory for short options as well. The options
 are arranged in alphabetical order based on the long option name. Hyphenated
-long options can also take underscore, and vice versa (e.g.
-\fI\-\-no\-xdev\fR or \fI\-\-no_xdev\fR) instead.
+long options can also use an underscore instead (e.g. \fI\-\-no\-xdev\fR and
+\fI\-\-no_xdev\fR are equivalent) or vice versa.
 .TP
 \fB\-c\fR, \fB\-\-cache\fR
 perform a two pass clone/copy. The first pass copies the selected directories
@@ -168,8 +175,7 @@ the subtree under it is not scanned so it is not cloned. In this context
 \fIPATT\fR stands for "pattern" and the glob(3) system library call is used
 to match zero or more file locations that will be excluded. Note that
 \fIPATT\fR may need to be surrounded by single or double quotes to stop
-shell expansion. Double quotes are used in the examples in this manpage as
-the rendering of manpages does weird things with single quotes.
+shell expansion.
 .br
 This option may be given more than once. For example if trying to clone
 procfs, then excluding /proc/kmsg is needed, plus excluding all the
@@ -181,7 +187,7 @@ Beware: a trailing slash on \fIPATT\fR is a different glob to the same
 \fIPATT\fR without that trailing slash. In most cases there should not be
 a trailing slash. Note that glob expansion takes place well before the
 scan of \fISPATH\fR starts and any \fIPATT\fR expressions not matching
-file at that time are ignored.
+files at that time are ignored.
 .br
 For more information see the DEREFERENCE AND EXCLUDE section below.
 .TP
@@ -202,10 +208,11 @@ For more information see the DEREFERENCE AND EXCLUDE and ORDER OF EVALUATION
 sections below.
 .TP
 \fB\-x\fR, \fB\-\-extra\fR
-does some extra sanity checks which may slow down the clone a little.
+does some extra sanity checks which may slow down the cloning operation
+somewhat.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Output the usage message and exit.
+Output the usage message then exit.
 .TP
 \fB\-H\fR, \fB\-\-hidden\fR
 the default action of this utility is to skip (bypass) files and directories
@@ -223,8 +230,10 @@ Note that the special filenames '.' (single character) and '..' (two
 characters) do not appear in this recursive scan. They can be thought of as
 command line shortcuts rather than real files. That said '..' may appear in
 a relative path (e.g. the target name of a symlink) but can (almost) always
-be transformed into a 'canonical' pathname that starts at the root (i.e. so
-it is absolute (rather than relative)) and contains no symlinks or instances
+be transformed into a
+.B canonical
+pathname. A canonical pathname (sometimes called absolute) starts at the
+root (i.e. always starts with '/') and contains no symlinks or instances
 of '.' or '..' .
 .TP
 \fB\-m\fR, \fB\-\-max\-depth\fR=\fIMAXD\fR
@@ -269,12 +278,16 @@ at /sys) there are several different file systems usually mounted. These
 are debugfs (/sys/kernel/debug) and tracefs (/sys/kernel/tracing). Non\-root
 users cloning sysfs need not worry about either of those file system
 instances because both require root permissions to enter.
+.br
+Due to the double negative sense of this option, the equivalent option:
+\fI\-\-other\-fs\fR has been introduced and it has the same action.
 .TP
 \fB\-O\fR, \fB\-\-other\-fs\fR
-This option has the same action as \fI\-\-no\-xdev\fR. The long option name
+This option has the same action as \fI\-\-no\-xdev\fR. This long option name
 is a little less cryptic and a little more indicative of the expanded
-scanning action. Again the default is to not scan outside the file system
-that the file at \fISPATH\fR belongs to.
+scanning action. Again the default is to
+.B not
+scan outside the file system that the (first) file at \fISPATH\fR belongs to.
 .TP
 \fB\-p\fR, \fB\-\-prune\fR=\fIT_PT\fR
 where \fIT_PT\fR is an abbreviation for "Take PaTh". \fIT_PT\fR should be a
@@ -324,9 +337,9 @@ the stat(2) system call on a regular file is
 The data read from a regular file in this context is effectively determined
 at the point that the read(2) system call is invoked and is not known before
 that point. Due to this action the byte length shown "ls \-l" inside a pseudo
-file system is wrong (often 0 or 4096). This leads to programs like tar
-generating this type of curious warning: "File shrank by 4095 bytes; padding
-with zeros".
+file system is usually incorrect (often 0 or 4096). This leads to programs
+like tar generating this type of curious warning: "File shrank by 4095 bytes;
+padding with zeros".
 .TP
 \fB\-s\fR, \fB\-\-source\fR=\fISPATH\fR
 \fISPATH\fR is the source of the clone (copy) operation. \fISPATH\fR must
@@ -337,7 +350,7 @@ The default source directory is /sys . That directory is expected to exist
 or be a symlink to an existing directory.
 .br
 If this option is given then either the \fI\-\-destination=DPATH\fR option
-must also be given or the \fI\-\-no\-xdev\fR option must be given.
+must also be given or the \fI\-\-no\-dst\fR option must be given.
 .br
 The long option \fI\-\-source=SPATH\fR may be shortened to
 \fI\-\-src=SPATH\fR .
@@ -386,8 +399,8 @@ A significant counter\-example is the venerable DOS FAT file system which
 does not have symlink support and it is still widely used.
 .PP
 In many pseudo file systems, symbolic links play an essential role. In the
-case of sysfs in Linux, there is arguably as much information in its
-symbolic links, as there is in its regular files.
+case of sysfs in Linux, there is arguably as much (meta\-) information in
+its symbolic links, as there is in its regular files.
 .PP
 Symlinks are a little tricky to handle when cloning a pseudo file system,
 especially sysfs, where the hardware may be disappearing and
@@ -398,7 +411,7 @@ source, a directory of the same name is created in the corresponding
 position of the destination. The algorithm then "descends" into the source
 directory copying each entry into the destination. The "ls \-f" command in
 Linux shows the native order in which a directory holds its contents and
-this is the order that this utility uses when cloning.
+this is the order that this utility follows when cloning.
 .PP
 Symlinks have two parts: its link name and its target name. The target name
 is where it "goes" and that location in the destination may not exist for
@@ -518,7 +531,7 @@ is generated during command line processing, one list entry for each
 \fI\-\-excl\-fn=EFN\fR option appearing on the command line. Each \fIEFN\fR
 can be matched zero or more times during the scan of \fISPATH\fR.
 .PP
-when the \fI\-\-prune=T_PT\fR option is given, a three pass algorithm is
+When the \fI\-\-prune=T_PT\fR option is given, a three pass algorithm is
 used. The first pass is as described above. The second pass "propagates"
 the exact \fIT_PT\fR matches toward the root (a chain of marks) and toward
 the leaves (marking all nodes in th exact mark's sub\-tree).
@@ -551,7 +564,10 @@ system. For example /proc/self/root is a symlink which usually targets '/' .
 Suggested options for reducing the size of the clone output:
     \-\-excl\-fn=subsystem \-\-excl\-fn=device \-\-excl\-fn=power
 .br
-See the prun4ls*.sh files in the examples directory.
+See the prun4ls*.sh files in the examples directory where there are bash
+scripts showing minimal clones of /sys suitable for lsblk, lscpu, lsmem,
+lsscsi and lsucpd. That examples directory is found in the source package
+and is installed under the "$(docdir)".
 .SH "CLONING PROCFS"
 The pseudo file system called procfs is typically mounted under /proc and
 primarily contains directories named for the Process Identifiers (PIDs)
@@ -605,7 +621,32 @@ hence cloning it should be fast with few problems encountered. One thing
 to note is that it does contain symlinks to other file systems such as
 /dev/core (target: /proc/core ), /dev/initctl (target: /run/initctl) and
 stdin/stdout/stderr (targets: /proc/self/fd/0 , 1 and 2) amongst others.
- SH NOTES
+.SH UTILITIES THAT ACCEPT SYSROOT
+There are various Linux command line utilities that will accept an option
+for an alternative sysroot (typically an alternative for /sys , /dev and
+/proc) that can take advantage of a cloned pseudo file system created by
+this utility. See the examples sub\-directory in this package's source
+for invocation examples.
+.TP
+.B lsblk
+has a \fB\-\-sysroot\fP \fIdirectory\fP option. Its manpage states: "The
+specified directory is the system root of the Linux instance to be
+inspected. The real device nodes in the target directory can be replaced
+by text files with udev attributes."
+.TP
+.B lsmem
+has a \fB\-\-sysroot\fP \fIdirectory\fP option. Its manpage states: "The
+specified directory is the system root of the Linux instance to be
+inspected."
+.TP
+.B lscpu
+has a \fB\-\-sysroot\fP \fIdirectory\fP option. Its manpage states: "The
+specified \fIdirectory\fP is the system root of the Linux instance to be
+inspected."
+.TP
+.B lsscsi
+has a \fB\-\-sysroot\fP \fIdirectory\fP option. Its manpage states: "The
+.SH NOTES
 Some information about sysfs in Linux follows.
 Linux calls the regular files is sysfs "attributes". Linux documentation says
 that sysfs attributes (i.e. the contents of those regular files) should
@@ -681,7 +722,7 @@ column. Notice that some utilities taking long options that have an
 associated argument can optionally take an "=" between the option and its
 argument (e.g. this utility) while others don't (e.g. lsblk and lsmem).
 .PP
-Probably the best examples can be found under the
+Again there are some examples of "pruning" in the
 .B examples
 directory of the clone_pseudo_fs source package.
 .SH AUTHOR

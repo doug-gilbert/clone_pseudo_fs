@@ -26,4 +26,10 @@ AC_ARG_ENABLE([debug],
                esac],[debug=false])
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 
-AC_OUTPUT(Makefile src/Makefile doc/Makefile)
+AC_CONFIG_FILES([
+  Makefile
+  src/Makefile
+  doc/Makefile
+  examples/Makefile
+])
+AC_OUTPUT

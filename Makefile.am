@@ -1,6 +1,7 @@
-SUBDIRS =	src doc
+SUBDIRS =	src doc examples
 
-EXTRA_DIST=autogen.sh
+EXTRA_DIST=\
+	autogen.sh
 
 distclean-local:
 	rm -rf \

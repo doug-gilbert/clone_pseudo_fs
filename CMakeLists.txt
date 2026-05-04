@@ -11,9 +11,8 @@ set (CMAKE_CXX_STANDARD_REQUIRED ON)
 set (CMAKE_CXX_EXTENSIONS OFF)
 
 set ( sourcefiles src/clone_pseudo_fs.cpp )
-set ( headerfiles src/bwprint.hpp )
 
-add_executable ( clone_pseudo_fs ${sourcefiles} ${headerfiles} )
+add_executable ( clone_pseudo_fs ${sourcefiles} )
 
 if ( BUILD_SHARED_LIBS )
     MESSAGE( ">> Build using shared libraries (default)" )
@@ -39,6 +38,8 @@ if ( ${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" )
     target_include_directories( clone_pseudo_fs PRIVATE /usr/local/include )
 endif ( )
 
+add_subdirectory(examples)
+
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
@@ -48,4 +49,6 @@ SET(CPACK_DEBIAN_PACKAGE_SECTION "admin")
 SET(CPACK_RPM_PACKAGE_DESCRIPTION "Allows pseudo file systems (e.g. sysfs) to be copied/cloned")
 SET(CPACK_RPM_PACKAGE_LICENSE "BSD-2-clause")
 SET(CPACK_RPM_PACKAGE_VENDOR "Douglas Gilbert")
+
 include(CPack)
+include(CTest)

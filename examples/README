@@ -16,4 +16,4 @@ exactly which files a ls* utility accesses. For example:
     strace lsblk >& /tmp/lsblk_strace.txt
 
 Douglas Gilbert
-20231218
+20260501
