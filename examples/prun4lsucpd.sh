@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Clone /sys on the current machine to /tmp/sys suitable for
 #    lsucpd --sysfsroot=/tmp/sys
@@ -11,3 +11,8 @@ clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
 -p /sys/class/power_supply -p  /sys/bus/typec -S
 
 # remove the -S if statistics are not required
+
+# Insert two linefeeds quietly
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+lsucpd --sysfsroot=/tmp/sys --capabilities

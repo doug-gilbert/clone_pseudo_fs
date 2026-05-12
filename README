@@ -120,5 +120,97 @@ and will place binaries and scripts in the /usr/local/bin directory.
 
 Instruction for using cmake are in the INSTALL file.
 
+
+Using clone_pseudo_fs
+---------------------
+The simplest way to use this utility is with no options:
+
+    $ clone_pseudo_fs
+
+which defaults the source to /sys and the destination to /tmp/sys. This
+can be done either as root or as a non-root user. Files, directories and
+special files (e.g. a character device like /dev/ttyUSB0 ) that a on-root
+user does not have access to read will not be cloned (copied).
+
+The source and destination (directories or symlinks to directories can be
+given as options (this utility does not take any command line arguments):
+
+    $ clone_pseudo_fs --src=/sys --dst=/tmp_sys
+
+and there are shorter and longer versions of the same invocation:
+
+    $ clone_pseudo_fs -s /sys -d /tmp_sys
+    $ clone_pseudo_fs --source=/sys --destination=/tmp_sys
+
+All invocation so far do the same clone operation: they clone /sys to
+/tmp/sys . To view statistics gather during the clone add:
+
+    $ clone_pseudo_fs -s /sys -d /tmp_sys --statistics
+
+and to further add statistics that the operating system gathers on
+this operation, try this:
+
+    $ /usr/bin/time -v clone_pseudo_fs -s /sys -d /tmp_sys -S
+
+The full path on the time utility is needed because the bash shell (perhaps
+other shells as well) has a built-in called 'time' and prefers its own time
+over the one found by searching through $PATH .
+
+Bad things can happen when scanning a pseudo file system. Consider a
+modern dock connected to a laptop via USB-C . Lets assume that laptop is
+powered using USB PD with power passing through that dock to the laptop.
+Further assume that clone_pseudo_fs is active and it is visiting the
+usb_power_delivery object pd2 which is the (far end) partner to pd0. And
+pd0 is the port on the laptop that cable is connected to. Now remove that
+cable and the situation degenerates. That pd2 object (and anything below
+it) will disappear from /sys . The recursive descent of /sys could find
+itself in a situation where its current directory just disappeared
+as (possibly) did its parent. How can it continue. Best to exit gracefully
+and suggest retries the clone.
+
+A snapshot copy of a pseudo file system would be ideal but in practice is
+not possible. Pseudo file systems are dynamic with that dynamism coming from
+the kernel "underneath" them. So user spaces locking schemes would not be
+effective over a pseudo file system (e.g. /sys (sysfs) and especially
+/proc (procfs)). The next best thing is to scan (and read regular files)
+in the source as quickly as possible. The default clone operation is a
+recursive descent over the source run in parallel with a recursive descent
+over the destination, creating nodes (file,directories, etc) in the
+destination as required. When a large amount of data is being read then
+written, it is the write operation that dominates the time usage. Yes,
+buffers cam make the write seem faster initially, but sooner or later those
+buffers file. So a faster strategy, on the read side, is to do the recursive
+descent on the read side, but instead of writing to the destination "on
+the fly), build an in-memory hierarchal tree reflecting what has been found
+in the source scan. Then when that source scan to in-memory (RAM) is complete,
+roll out the in-memory representation to the destination. This two scan
+approach is what is done when the --cache option is given.
+
+    $ clone_pseudo_fs -s /sys -d /tmp_sys --cache
+
+The first scan does a recursive descent through /sys (i.e. the source). It
+builds an in-memory (RAM) hierarchal representation that records information
+from every node (regular file, directory, special file or symlink) visited
+in that recursive descent. The name of each regular file is placed in that
+in-memory representation but
+.B not
+the contents of that file. The contents of each regular file is fetched from
+the source and written to the destination (tree) in the second pass. If the
+cache option is given twice (mostly simply with '-cc') then the contents of
+each regular file is read and stored in-memory in the first pass and then
+copied into the destination on the second pass.
+
+    $ clone_pseudo_fs -s /sys -d /tmp_sys -cc
+
+When the cache option is given twice the first scan takes a little longer,
+the in-memory representation (tree) is larger, and the second scan no longer
+needs to access the source (thus is somewhat isolated from changes in the
+source).
+
+To see the use of the --prune= and -excl-fn= options see the examples
+directory, either in the source package of if clone_pseudo_fs is installed,
+most likely here: /usr/share/doc/clone_pseudo/examples/ . There are simple
+scripts that show various invocations.
+
 Douglas Gilbert
-3rd April 2026 [rev: 30]
+9th May 2026 [rev: 36]

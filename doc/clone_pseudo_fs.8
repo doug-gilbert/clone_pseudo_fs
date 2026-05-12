@@ -46,8 +46,8 @@ resource usage. Some of these utilities, such as lsblk, lscpu, lsmem and
 lsscsi, have a:
     \-\-sysroot=AR_PT
 .br
-option that allows them to data\-mine in an alternate root path. For example
-lsscsi usually data\-mines in /sys and /dev but with this invocation:
+option that allows them to data\-mine in an alternate root path (AR_PT). For
+example lsscsi usually data\-mines in /sys and /dev but with this invocation:
     lsscsi \-\-sysroot=/tmp
 .br
 it will data\-mine in /tmp/sys and /tmp/dev instead. The purpose of
@@ -422,7 +422,7 @@ hardware which sysfs (for example) is trying to mirror have removed that
 target name location. Whatever the reason, so\-called "dangling" symlinks
 are always created. In a changing hardware environment the time between when
 a symlink is created (using its link name) and resolved (i.e. when its target
-name is created) may be measured in seconds, and that timespan increases the
+name is created) may be measured in seconds, and that time span increases the
 chance that something else has changed.
 .PP
 If this is indeed found to be a problem, using the \fI\-\-dereference=SYML\fR
@@ -645,7 +645,21 @@ specified \fIdirectory\fP is the system root of the Linux instance to be
 inspected."
 .TP
 .B lsscsi
-has a \fB\-\-sysroot\fP \fIdirectory\fP option. Its manpage states: "The
+has two related options \fB\-\-sysroot=AR_PT\fP and
+\fB\-\-sysfsroot=PATH\fP. The alternate root path (AR_PT) defaults to the
+root directory '/' while the PATH defaults to where sysfs is normally
+mounted: '/sys' . After clone_pseudo_fs is invoked with no
+options, '/sys' is cloned/copied to '/tmp/sys'. Then lsscsi, invoked
+without options and arguments; and 'lsscsi \-\-sysroot=/tmp' should produce
+the same output. And 'lsscsi \-\-sysfsroot=/tmp/sys' should also produce
+the same output.
+.TP
+.B lsucpd
+has a \fB\-\-sysfsroot=PATH\fP option, which defaults to where sysfs is
+normally mounted: '/sys' . After clone_pseudo_fs is invoked with no
+options, '/sys' is cloned/copied to '/tmp/sys'. Then lsucpd, invoked
+without options and arguments; and 'lsucpd \-\-sysfsroot=/tmp/sys' should
+produce the same output.
 .SH NOTES
 Some information about sysfs in Linux follows.
 Linux calls the regular files is sysfs "attributes". Linux documentation says

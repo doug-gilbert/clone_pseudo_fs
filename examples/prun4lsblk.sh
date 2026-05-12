@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/sh
+# nothing fancy from bash required so go with a simple shell
 
 # Clone /sys /dev and /proc on the current machine to similarly named
 # directories under /tmp suitable for
@@ -20,11 +21,39 @@ set -x #echo on
 # clone_pseudo_fs -s /proc -d /tmp/proc -w 0 -p /proc/self -r 8192
 # Here is another approach:
 mkdir /tmp/proc
+
+# Insert two linefeeds quietly
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
 clone_pseudo_fs -s /proc/self -d /tmp/proc/self -r 8192 -S
 
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
 clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
 
 clone_pseudo_fs -s /sys -d /tmp/sys -p /sys/block -p /sys/class/block \
 -p /sys/dev/block -E subsystem -E device -S -S
 
 # remove the -S option if statistics are not required.
+
+# -E is the short form of the --excl-fn= option
+# -p is the short form of the --prune= option
+# -S is the short form of the --statistics (or --stats) option
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+# This should now work ...
+lsblk --sysroot /tmp
+
+# ... but in Ubuntu 26.04 LTS apparmor breaks lsblk! The security folks would
+# argue but they break the lsblk --sysroot option _without_ explaining why
+# (e.g. in 'man lsblk'). Rather than smash apparmor (e.g. giving 'apparmor=0'
+# to the kernel invocation). Here is a simple, finely tuned approach:
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+cp /usr/bin/lsblk /tmp
+/tmp/lsblk --sysroot /tmp
+

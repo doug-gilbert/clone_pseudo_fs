@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/sh
+# nothing fancy from bash required so go with a simple shell
 
 # This script will only find NVMe devices with lsscsi. There is
 # a comment below how to add SCSI devices to lsscsi's output
@@ -21,6 +22,13 @@ clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
 # to fetch SCSI devices as well as NVMe devices:
 # -p /sys/class/scsi_device/ -p /sys/class/scsi_generic/ -p /sys/bus/scsi
 
+# Insert two linefeeds quietly
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
 # Now clone /dev to /tmp/dev . Note that nodes like /dev/null will not
 # be cloned to /tmp/dev/null unless root permission are active.
 clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+lsscsi --sysroot=/tmp

@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/sh
+# nothing fancy from bash required so go with a simple shell
 
 # Clone /sys and /dev on the current machine to /tmp/sys and /tmp/dev
 # suitable for this invocation:
@@ -19,6 +20,9 @@ clone_pseudo_fs -s /sys -d /tmp/sys -E device -E subsystem -E power \
 # To exclude the NVMe devices, remove the '-p /sys/class/nvme' and
 # '-p /sys/devices/virtual/nvme-subsystem' options.
 
+# Insert two linefeeds quietly
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
 # Now clone /dev to /tmp/dev . Note that nodes like /dev/null will not
 # be cloned to /tmp/dev/null unless root permission are active.
 clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
@@ -31,9 +35,9 @@ clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
 #
 # compare that with this invocation:
 #    lsscsi --sysroot=/tmp;
-# [0:0:0:0]    disk    Linux    scsi_debug       0191  /dev/sda 
-# [N:0:1:1]    disk    SKHynix_HFS512GDE999999__1      /dev/nvme0n1        
-# [N:1:1:1]    disk    Linux__1                        /dev/nvme1n1
+# [0:0:0:0]    disk    Linux    scsi_debug       0191  /tmp/dev/sda 
+# [N:0:1:1]    disk    SKHynix_HFS512GDE999999__1      /tmp/dev/nvme0n1        
+# [N:1:1:1]    disk    Linux__1                        /tmp/dev/nvme1n1
 #
 # Using this invocation:
 #    tar czf dev_non_root.tar.gz /dev
@@ -42,3 +46,11 @@ clone_pseudo_fs -s /dev -d /tmp/dev -w 0 -S
 # them will require root permissions. The "well enough" warning is
 # because many alternate names for those device nodes are in
 # subdirectories that cannot be read by non-root users.
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+lsscsi --sysroot=/tmp
+
+{ set +x; } 2>/dev/null ; echo "" ; echo "" ; set -x
+
+lsscsi --sysfsroot=/tmp/sys

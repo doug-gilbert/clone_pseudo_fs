@@ -2,7 +2,6 @@ AC_INIT(clone_pseudo_fs, 0.90, dgilbert@interlog.com)
 
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 AM_MAINTAINER_MODE
-# AM_CONFIG_HEADER(config.h)
 AC_CONFIG_HEADERS([config.h])
 
 AC_LANG(C++)

@@ -17,7 +17,19 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "0.90 20260503 [svn: r35]";
+static const char * const version_str = "pre 0.90 20260512 [svn: r36]";
+
+// C headers before C++ headers, Unix C headers first
+#include <unistd.h>
+#include <getopt.h>             /* non-standard giving pain with AIX */
+#include <fcntl.h>
+#include <glob.h>
+#include <poll.h>
+#include <sys/stat.h>
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include <iostream>
 #include <fstream>
@@ -34,31 +46,32 @@ static const char * const version_str = "0.90 20260503 [svn: r35]";
 #include <chrono>
 #include <cstring>              // needed for strstr()
 #include <cstdio>               // using sscanf()
-// Unix C headers below
-#include <unistd.h>
-#include <getopt.h>             /* non-standard giving pain with AIX */
-#include <fcntl.h>
-#include <glob.h>
-#include <poll.h>
-#include <sys/stat.h>
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#if __cplusplus >= 202302L // C++23 or later
+
+#include <format>
+static const bool cpp23_or_later { true };
+
+#else
 
 // Bill Weinman's header library for C++20 follows. Expect to drop if moved
 // to >= C++23 and then s/bw::print/std::print/
 #include "bwprint.hpp"
+static const bool cpp23_or_later { false };
 
-static const unsigned int def_reglen { 256 };
-static const int reg_re_read_sz { 1024 };
+#endif
+
+
+static const unsigned int def_reglen { 256 };   /* --reglen=<n> overrides */
+
+static const char my_name[] { "clone_pseudo_fs" };
 
 namespace fs = std::filesystem;
 namespace chron = std::chrono;
 
 using sstring = std::string;
 
-// The "inmem*" structs are associated with using the '--cache' option.
+// The "inmem_*" structs are associated with using the '--cache' option.
 // Files are divided into 6 categories: regular, directory, symlink,
 // device (char or block), fifo_or_socket and other. Data in common is
 // placed in the inmem_base_t struct. A std::variant called inm_var_t
@@ -79,7 +92,10 @@ static auto & scout { std::cout };
 static auto & scerr { std::cerr };
 static fs::path prev_rdi_pt;
 
-static int cpf_verbose;  // in 'struct opts_t' and file scope here ..
+// Easier to access verbose at file scope than op->verbose which would
+// need op passed through. fp->verbose and op->verbose should both have
+// the same value, both initialized to zero.
+static int fs_verbose { 0 };
 
 #ifdef DEBUG    // use './configure --enable-debug' to get this set
 // the DEBUG define is set when './configure --enable-debug' is used
@@ -92,15 +108,24 @@ static bool want_sloc { };      // set if DEBUG and -vV not given
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
+// Error or --verbose printing template function, pr_err(-1, ...) always
+// prints.  Will print if vb_ge >= fs_verbose . The second and third ...
+// arguments should function the same as std::string()
 template<typename... Args>
     constexpr void pr_err(int vb_ge, const std::string_view str_fmt,
                           Args&&... args) noexcept {
-        if (vb_ge >= cpf_verbose)       // vb_ge==-1 always prints
+        if (vb_ge >= fs_verbose)       // vb_ge==-1 always prints
             return;
         try {
-        fputs(BWP_FMTNS::vformat(str_fmt,
-                                 BWP_FMTNS::make_format_args(args...)).c_str(),
-                                 stderr);
+#if __cplusplus >= 202302L // C++23 or later
+            fputs(std::vformat(str_fmt,
+                               std::make_format_args(args...)).c_str(),
+                               stderr);
+#else
+            fputs(BWP_FMTNS::vformat(str_fmt,
+                         BWP_FMTNS::make_format_args(args...)).c_str(),
+                                     stderr);
+#endif
         }
         catch (...) {
             scerr << "pr_err: vformat: threw exception, str_fmt: "
@@ -114,8 +139,12 @@ template<typename... Args>
     constexpr std::string fmt_to_str(const std::string_view str_fmt,
                                      Args&&... args) noexcept {
         try {
+#if __cplusplus >= 202302L // C++23 or later
+        return std::vformat(str_fmt, std::make_format_args(args...));
+#else
         return BWP_FMTNS::vformat(str_fmt,
                                   BWP_FMTNS::make_format_args(args...));
+#endif
         }
         catch (...) {
             scerr << "fmt_to_str: vformat: threw exception, str_fmt: "
@@ -169,7 +198,7 @@ struct inmem_base_t {
     unsigned int  par_dir_ind { };      // save a few bytes
 
     // damn stupid compiler, prune_mask_e is defined as a unit8_t enum
-    mutable uint8_t prune_mask { }; // used when op->prune_given is true
+    mutable uint8_t prune_mask { };    // used when op->prune_given is true
 
     uint8_t is_root { };
 
@@ -380,6 +409,7 @@ struct stats_t {
     unsigned int num_oth_fs_skipped;
     unsigned int num_hidden_skipped;
     unsigned int num_regular;
+    unsigned int num_regular_eof;
     unsigned int num_block;
     unsigned int num_char;
     unsigned int num_fifo;
@@ -424,10 +454,11 @@ struct stats_t {
     unsigned int num_reg_d_enoent_enodev_enxio;
     unsigned int num_reg_d_e_other;
     unsigned int num_reg_from_cache_err;
+    unsigned long num_reg_bytes_read;
     int max_depth;
 };
 
-struct mut_opts_t {
+struct mut_opts_t {     /* mutable data pointed to by op->mutp */
     bool prune_take_all { };    // for '--src=/sys --prune=/sys'
     bool clone_work_subseq { };
     bool cache_src_subseq { };
@@ -717,12 +748,12 @@ inmem_subdirs_t::debug(const sstring & intro) const noexcept
         pr_err(-1, "{}\n", intro);
     pr_err(-1, "  sdir_v.size: {}\n", sdir_v_sz);
     pr_err(-1, "  sdir_fn_ind_m.size: {}\n", sdir_fn_ind_m_sz);
-    if ((cpf_verbose > 0) && (sdir_fn_ind_m_sz > 0)) {
+    if ((fs_verbose > 0) && (sdir_fn_ind_m_sz > 0)) {
         pr_err(0, "  sdir_fn_ind_m map:\n");
         for (auto && [n, v] : sdir_fn_ind_m)
             pr_err(0, "    [{}]--> {}\n", n, v);
     }
-    if ((cpf_verbose > 1) && (sdir_v_sz > 0)) {
+    if ((fs_verbose > 1) && (sdir_v_sz > 0)) {
         pr_err(1, "  sdir_v vector:\n");
         for (int k { }; auto && v : sdir_v) {
             pr_err(1, "    {}:  {}, filename: {:s}\n", k,
@@ -1204,13 +1235,20 @@ xfr_reg_file2inmem(const sstring & from_file, inmem_regular_t & ireg,
                                from_file, l());
                     num = 0;
                     res = 0;
+                    q->num_reg_bytes_read += off;
                     close(from_fd);
                     goto store;
                 }
+            } else if (0 == num) {      // file EOF detected
+                ++q->num_regular_eof;
+                q->num_reg_bytes_read += off;
+                break;
             } else {
                 off += num;
-                if (num < reg_re_read_sz)
+                if ((unsigned int)off >= op->reglen) {
+                    q->num_reg_bytes_read += off;
                     break;
+                }
             }
         } while (true);
         num = off;
@@ -1333,13 +1371,20 @@ xfr_reg_file2file(const sstring & from_file, const sstring & destin_file,
                         pr_err(0, "timed out waiting for this file: {}{}\n",
                                from_file, l());
                     num = 0;
+                    q->num_reg_bytes_read += off;
                     close(from_fd);
                     goto do_destin;
                 }
+            } else if (0 == num) {      // file EOF detected
+                ++q->num_regular_eof;
+                q->num_reg_bytes_read += off;
+                break;
             } else {
                 off += num;
-                if (num < reg_re_read_sz)
+                if ((unsigned int)off >= op->reglen) {
+                    q->num_reg_bytes_read += off;
                     break;
+                }
             }
         } while (true);
         num = off;
@@ -1486,13 +1531,16 @@ update_stats(fs::file_type s_sym_ftype, fs::file_type s_ftype, bool hidden,
 static void
 show_stats(const struct opts_t * op) noexcept
 {
-    bool extra { (op->want_stats > 1) || (cpf_verbose > 0) };
+    bool extra { (op->want_stats > 1) || (fs_verbose > 0) };
     bool eagain_likely { (op->wait_given && (op->reglen > 0)) };
     struct stats_t * q { &op->mutp->stats };
 
     scout << "Statistics:\n";
     scout << "Number of nodes: " << q->num_node << "\n";
     scout << "Number of regular files: " << q->num_regular << "\n";
+    scout << "Number of regular file EOFs: " << q->num_regular_eof << "\n";
+    scout << "Number of regular file bytes read: " << q->num_reg_bytes_read
+          << "\n";
     scout << "Number of directories: " << q->num_dir << "\n";
     scout << "Number of symlinks to directories: " << q->num_sym2dir << "\n";
     scout << "Number of symlinks to regular files: " << q->num_sym2reg
@@ -2035,7 +2083,7 @@ clone_work(const fs::path & src_pt, const fs::path & dst_pt,
                 itr.disable_recursion_pending();
             else if ((s_sym_ftype == fs::file_type::directory) &&
                      op->max_depth_active && (depth >= op->max_depth)) {
-                if (cpf_verbose > 2)
+                if (fs_verbose > 2)
                     pr_err(-1, "{}: hits max_depth={}, don't enter {}{}\n",
                            __func__, depth, s(pt), l());
                 itr.disable_recursion_pending();
@@ -2062,7 +2110,7 @@ clone_work(const fs::path & src_pt, const fs::path & dst_pt,
             continue;
         }
         fs::path ongoing_d_pt { dst_pt / rel_pt };
-        if (cpf_verbose > 4)
+        if (fs_verbose > 4)
         pr_err(4, "{}: pt: {}, rel_path: {}, ongoing_d_pt: {}\n", __func__,
                s(pt), s(rel_pt), s(ongoing_d_pt));
 
@@ -3325,7 +3373,7 @@ run_unique_and_erase(std::vector<sstring> &v)
 #if __clang__ && (__clang_major__ < 16)
 // #warning ">>> got CLANG 15"
     // CLANG 15.x has issue with std::ranges::unique() so fallback
-    // tp std::unique()
+    // to std::unique()
     const auto ret { std::unique(v.begin(), v.end()) };
     v.erase(ret, v.end());
 #else
@@ -3426,6 +3474,12 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
                 pr_err(-1, "unable to decode integer for --reglen=RLEN{}\n",
                        l());
                 return 1;
+            } else {
+                if (op->reglen >= INT32_MAX) { // enough is enough
+                    pr_err(-1, "don't allow REGLEN to be >= {} bytes\n",
+                           op->reglen);
+                    return 1;
+                }
             }
             break;
         case 'R':
@@ -3452,7 +3506,7 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
             ++op->want_stats;
             break;
         case 'v':
-            ++cpf_verbose;
+            ++fs_verbose;
             ++op->verbose;
             op->verbose_given = true;
             break;
@@ -3477,9 +3531,28 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
         }
     }
     if (optind < argc) {
+        bool first { true };
+
         if (optind < argc) {
-            for (; optind < argc; ++optind)
+            for (; optind < argc; ++optind, first = false) {
+                if (op->source_given && op->destination_given) {
+                    if (first)
+                        pr_err(-1, "{}: takes no arguments, only options\n",
+                               my_name);
+                } else if (op->source_given) {
+                    if (first)
+                        pr_err(-1, "{}: '-d <destination>' missing\n",
+                               my_name);
+                } else if (op->destination_given) {
+                    if (first)
+                        pr_err(-1, "{}: '-s <source>' missing\n", my_name);
+                } else {
+                    if (first)
+                        pr_err(-1, "{}: need '-s <source>' and "
+                               "'-d <destnation> at least\n", my_name);
+                }
                 pr_err(-1, "Unexpected extra argument: {}\n\n", argv[optind]);
+            }
             usage();
             return 1;
         }
@@ -3491,17 +3564,19 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
 #ifdef DEBUG
     pr_err(-1, "In DEBUG mode, ");
     if (op->verbose_given && op->version_given) {
+        pr_err(-1, "C++23 or later compiler: {}\n", cpp23_or_later);
         pr_err(-1, "but override: '-vV' given, zero verbose and continue\n");
         op->verbose_given = false;
         op->version_given = false;
         op->verbose = 0;
-        cpf_verbose = 0;
+        fs_verbose = 0;
         want_sloc = false;
     } else if (! op->verbose_given) {
         pr_err(-1, "set '-vv'\n");
+        pr_err(-1, "========================\n");
         if (op->verbose < 2) {
             op->verbose = 2;
-            cpf_verbose = 2;
+            fs_verbose = 2;
         }
         want_sloc = true;
     } else {
@@ -3509,8 +3584,10 @@ parse_cmd_line(struct opts_t * op, int argc,  char * argv[])
         want_sloc = true;
     }
 #else
-    if (op->verbose_given && op->version_given)
+    if (op->verbose_given && op->version_given) {
+        pr_err(-1, "C++23 or later compiler: {}\n", cpp23_or_later);
         pr_err(-1, "Not in DEBUG mode, so '-vV' has no special action\n");
+    }
 #endif
     if (op->version_given) {
         scout << version_str << "\n";
@@ -3567,6 +3644,7 @@ main(int argc, char * argv[])
         op->source_pt = str;
     } else { // expect sysfs_root to be an absolute path
         op->source_pt = sysfs_root;
+        pr_err(1, "source not given, defaulting to: {}\n", sysfs_root);
     }
     fs::file_status src_fstatus { fs::status(op->source_pt, ec) };
 
@@ -3599,8 +3677,10 @@ main(int argc, char * argv[])
             pr_err(-1, "When --source= given, need also to give "
                    "--destination= (or --no-dst){}\n", l());
             return 1;
-        } else
+        } else {
             d_str = def_destin_root;
+            pr_err(1, "destination not given, defaulting to: {}\n", d_str);
+        }
         if (d_str.size() == 0) {
             pr_err(-1, "Confused, what is destination? [Got empty "
                    "string]{}\n", l());
@@ -3750,7 +3830,7 @@ main(int argc, char * argv[])
                         excl_warning_issued = true;
                     }
                 }
-            }
+            }           /* end of for loop over ex_paths.gl_pathv[] */
             globfree(&ex_paths);
             ex_sz = op->mutp->glob_exclude_v.size();
 
@@ -3814,7 +3894,7 @@ main(int argc, char * argv[])
 
     if (! op->no_destin) {
         if (path_contains_canon(op->source_pt, op->destination_pt)) {
-            pr_err(-1, "Source contains destination, infinite recursion "
+            pr_err(-1, "Source CONTAINS destination, infinite recursion "
                    "possible{}\n", l());
             if ((op->max_depth == 0) && (ex_sz == 0)) {
                 pr_err(-1, "exit, due to no --max-depth= and no "
@@ -3824,7 +3904,7 @@ main(int argc, char * argv[])
                 pr_err(-1, "Probably best to --exclude= destination, will "
                        "continue{}\n", l());
         } else {
-            if (cpf_verbose > 0)
+            if (fs_verbose > 0)
                 pr_err(-1, "Source does NOT contain destination (good){}\n",
                        l());
             if (path_contains_canon(op->destination_pt, op->source_pt)) {
@@ -3933,14 +4013,14 @@ main(int argc, char * argv[])
         inmem_t src_rt_cache(s_inm_rt);
         op->mutp->cache_rt_dirp = std::get_if<inmem_dir_t>(&src_rt_cache);
 
-        if (cpf_verbose > 4) {
+        if (fs_verbose > 4) {
             pr_err(4, ">>> initial, empty cache tree:");
             show_cache(src_rt_cache, true, op);
         }
         ec = do_cache(src_rt_cache, op);  // src ==> cache ==> destination
         if (ec)
             res = 1;
-        if (cpf_verbose > 4) {
+        if (fs_verbose > 4) {
             pr_err(4, ">>> final cache tree:\n");
             show_cache(src_rt_cache, true, op);
         }

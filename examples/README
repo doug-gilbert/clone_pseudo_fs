@@ -15,5 +15,7 @@ number of nodes further. The strace utility is a good way of seeing
 exactly which files a ls* utility accesses. For example:
     strace lsblk >& /tmp/lsblk_strace.txt
 
+Best to send the output to a file as there is so much of it.
+
 Douglas Gilbert
-20260501
+20260509
