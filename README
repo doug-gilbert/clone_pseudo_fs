@@ -118,7 +118,7 @@ or
 Note that the final 'make install' will usually require root permissions
 and will place binaries and scripts in the /usr/local/bin directory.
 
-Instruction for using cmake are in the INSTALL file.
+Instructions for using cmake are in the INSTALL file.
 
 
 Using clone_pseudo_fs

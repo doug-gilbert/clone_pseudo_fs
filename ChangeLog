@@ -1,6 +1,6 @@
 Linux utility for cloning pseudo filesystems like sysfs
 
-Changelog for pre-release clone_pseudo_fs-0.90 [20260512] [svn: r36]
+Changelog for pre-release clone_pseudo_fs-0.90 [20260527] [svn: r37]
   - add --other-fs option, a less cryptic synonym for
     --no-xdev option (to scan beyond original,
     encountered file system)
@@ -17,12 +17,16 @@ Changelog for pre-release clone_pseudo_fs-0.90 [20260512] [svn: r36]
   - add examples directory with scripts generating minimal
     pseudo file system copies for ls* utilities
     - install these scripts under $(docdir)/examples
+  - rename build_debian.sh to debian_build.sh
+  - rename testing directory to ttesting (to avoid clash
+    with CTest's Testing directory
   - fix multiple license references so all refer
     to BSD-2-Clause
   - improve handling of large regular files
   - improve accuracy of 'Number of pruned nodes'
-  - add experimental cmake support and keep autotools
+  - add cmake support and keep autotools
     - can build deb and rpm packages with 'cpack .'
+    - decentralize cmake configuration files (1 -> 4)
   - state the compilers required: g++ 13 or clang++ 16,
     later versions of those compilers should work
     - re-instate support for g++ 12 and clang++ 15 which

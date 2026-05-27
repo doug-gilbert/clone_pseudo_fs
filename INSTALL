@@ -62,6 +62,19 @@ the clone_pseudo_fs source directory) if all goes well.
 There is a build_debian.sh script in the tarball's top level directory
 that does the above.
 
+Autotools can create "out-of-tree" build. Here is an example:
+    ./autogen.sh
+    mkdir build
+    cd build
+    ../configure
+    make
+    make install
+
+All the generated files (most of them are artifacts that are only needed
+during the build) can be removed like this:
+    cd ..
+    rm -rf build
+
 CMAKE
 =====
 The author is experimenting with cmake with a goal to support _both_
@@ -99,7 +112,22 @@ A static executable can be selected with the first cmake like this:
     cmake -D BUILD_SHARED_LIBS=off .
 The default is to build the executable using shared libraries.
 
-Suggestions welcome.
+On Linux the default compilers are gcc/g++ and switch to clang precede
+'cmake .' with 'CC=clang CXX=clang++'. For example:
+    CC=clang CXX=clang++  cmake . -DENABLE_DEBUG=ON
+
+The second step remain the same: 'cmake --build .' . To increase the amount
+of debug/verbosity append '-v' to that second step.
+
+cmake can also make an out-of-tree build in a similar fashion to autotools.
+Here is an example with this project:
+    cmake -S . -B build
+    cd build
+    cmake --build .
+    cpack .
+
+If all goes well the deb and rpm packages will be placed in the build
+directory.
 
 Douglas Gilbert
-27 April 2026
+21 May 2026

@@ -10,11 +10,13 @@ distclean-local:
 	  aclocal.m4 \
 	  compile \
 	  configure \
+	  configure~ \
 	  config.guess \
 	  config.guess.cdbs-orig\
 	  config.sub \
 	  config.sub.cdbs-orig \
 	  config.h.in \
+	  config.h.in~ \
 	  config.h \
 	  config.log \
 	  config.status \

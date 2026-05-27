@@ -17,7 +17,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "pre 0.90 20260512 [svn: r36]";
+static const char * const version_str = "pre 0.90 20260527 [svn: r33]";
 
 // C headers before C++ headers, Unix C headers first
 #include <unistd.h>
@@ -26,10 +26,6 @@ static const char * const version_str = "pre 0.90 20260512 [svn: r36]";
 #include <glob.h>
 #include <poll.h>
 #include <sys/stat.h>
-
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
 
 #include <iostream>
 #include <fstream>
@@ -46,6 +42,10 @@ static const char * const version_str = "pre 0.90 20260512 [svn: r36]";
 #include <chrono>
 #include <cstring>              // needed for strstr()
 #include <cstdio>               // using sscanf()
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #if __cplusplus >= 202302L // C++23 or later
 
