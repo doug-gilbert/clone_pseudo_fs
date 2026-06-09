@@ -55,6 +55,6 @@ fi
 
 
 %changelog
-* Wed May 27 2026 - dgilbert at interlog dot com
+* Mon Jun 08 2026 - dgilbert at interlog dot com
 - initial version
   * clone_pseudo_fs-0.90

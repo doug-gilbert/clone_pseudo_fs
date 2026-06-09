@@ -2,8 +2,6 @@
  * Copyright (c) 2023-2026 Douglas Gilbert.
  * All rights reserved.
  * Use of this source code is governed by a BSD-style
- * license that can be found in the BSD_LICENSE file.
- *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
@@ -17,7 +15,7 @@
 
 // Initially this utility will assume C++20 or later
 
-static const char * const version_str = "pre 0.90 20260527 [svn: r33]";
+static const char * const version_str = "pre 0.90 20260608 [svn: r38]";
 
 // C headers before C++ headers, Unix C headers first
 #include <unistd.h>

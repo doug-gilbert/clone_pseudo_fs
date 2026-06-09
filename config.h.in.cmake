@@ -1,7 +1,12 @@
+#ifndef CONFIG_H
+#define CONFIG_H
 
 #cmakedefine OS_LINUX 1
+#cmakedefine SG_LIB_LINUX 1
 #cmakedefine OS_FREEBSD 1
+#cmakedefine SG_LIB_FREEBSD 1
 #cmakedefine OS_SOLARIS 1
+#cmakedefine SG_LIB_SOLARIS 1
 
 #cmakedefine HAVE_STD_FORMAT 1
 
@@ -20,3 +25,4 @@
 // #      set(FEATURE_COMMENT "//")
 // @FEATURE_COMMENT@#define OPTIONAL_SETTING 1
 
+#endif

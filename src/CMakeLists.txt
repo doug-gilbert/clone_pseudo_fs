@@ -5,6 +5,10 @@ add_executable ( clone_pseudo_fs ${sourcefiles} )
 
 target_include_directories(clone_pseudo_fs PRIVATE ${CMAKE_BINARY_DIR})
 
+if ( OS_FREEBSD )
+    target_include_directories( clone_pseudo_fs PRIVATE /usr/local/include )
+endif ( OS_FREEBSD )
+
 if ( BUILD_SHARED_LIBS )
     MESSAGE( ">> Build using shared libraries (default)" )
 else ( BUILD_SHARED_LIBS )
